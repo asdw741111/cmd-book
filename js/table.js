@@ -31,7 +31,13 @@ export function renderTable({ columns, rows, sortColumn, sortDir }) {
   const body = rows
     .map(
       (row) =>
-        `<tr>${columns.map((col) => `<td>${esc(row[col.key])}</td>`).join('')}</tr>`,
+        `<tr>${columns
+          .map((col) =>
+            typeof col.format === 'function'
+              ? `<td>${col.format(row[col.key], row)}</td>`
+              : `<td>${esc(row[col.key])}</td>`,
+          )
+          .join('')}</tr>`,
     )
     .join('');
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
