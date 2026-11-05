@@ -20,7 +20,7 @@ Unit tests cover the pure modules (`data`, `charts`, `table`, `theme`) with
 Node's built-in test runner:
 
 ```sh
-node --test tests/
+node --test
 ```
 
 Requires Node 18+.
