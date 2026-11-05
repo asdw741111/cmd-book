@@ -118,6 +118,7 @@ td {
 }
 
 th {
+  white-space: nowrap;
   cursor: pointer;
   user-select: none;
   color: var(--text-dim);
@@ -131,6 +132,7 @@ th:hover {
 
 td {
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 tr:hover td {

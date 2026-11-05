@@ -14,8 +14,10 @@ const sortState = {
   hosts: { column: 'hostname', dir: 'asc' },
 };
 
+const STATUS_GLYPHS = { healthy: '●', degraded: '▲', down: '■', success: '●', failed: '■', 'rolled-back': '▲' };
+
 const statusPill = (status) =>
-  `<span class="status status-${esc(status)}">${esc(status)}</span>`;
+  `<span class="status status-${esc(status)}">${STATUS_GLYPHS[status] || '●'} ${esc(status)}</span>`;
 
 const deployColumns = [
   { key: 'id', label: 'Deploy', type: 'string' },
