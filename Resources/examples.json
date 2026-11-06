@@ -1,0 +1,420 @@
+{
+  "version": 1,
+  "examples": [
+    {
+      "id": "ffmpeg-to-mp4",
+      "tool": "ffmpeg",
+      "title": "转码为 MP4（H.264 + AAC）",
+      "summary": "兼容性最好的通用转码。CRF 23 是画质与体积的常用平衡点。",
+      "argv": ["-y", "-i", "{{input}}", "-c:v", "libx264", "-crf", "23", "-preset", "medium", "-c:a", "aac", "-b:a", "128k", "{{output}}"],
+      "fields": [
+        { "key": "input", "label": "输入文件", "value": "input.mov", "hint": "工作目录下的相对路径或绝对路径" },
+        { "key": "output", "label": "输出文件", "value": "output.mp4" }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "ffmpeg-extract-audio",
+      "tool": "ffmpeg",
+      "title": "从视频提取 MP3 音频",
+      "summary": "去掉视频轨，重新编码为 MP3。",
+      "argv": ["-y", "-i", "{{input}}", "-vn", "-acodec", "libmp3lame", "-q:a", "2", "{{output}}"],
+      "fields": [
+        { "key": "input", "label": "输入视频", "value": "input.mp4" },
+        { "key": "output", "label": "输出音频", "value": "audio.mp3" }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "ffmpeg-trim",
+      "tool": "ffmpeg",
+      "title": "无损裁剪片段",
+      "summary": "用 -c copy 不重新编码，速度快，但只能在关键帧处切分。",
+      "argv": ["-y", "-ss", "{{start}}", "-i", "{{input}}", "-t", "{{duration}}", "-c", "copy", "{{output}}"],
+      "fields": [
+        { "key": "start", "label": "起始时间", "value": "00:00:10" },
+        { "key": "duration", "label": "时长（秒）", "value": "30" },
+        { "key": "input", "label": "输入文件", "value": "input.mp4" },
+        { "key": "output", "label": "输出文件", "value": "clip.mp4" }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "ffmpeg-gif",
+      "tool": "ffmpeg",
+      "title": "视频转 GIF 动图",
+      "summary": "12 fps、宽 480 像素，适合做预览动图。",
+      "argv": ["-y", "-i", "{{input}}", "-vf", "fps=12,scale=480:-1:flags=lanczos", "-loop", "0", "{{output}}"],
+      "fields": [
+        { "key": "input", "label": "输入视频", "value": "input.mp4" },
+        { "key": "output", "label": "输出 GIF", "value": "preview.gif" }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "ffmpeg-thumbnail",
+      "tool": "ffmpeg",
+      "title": "截取单帧封面图",
+      "summary": "在指定时间点取一帧保存为图片。",
+      "argv": ["-y", "-ss", "{{time}}", "-i", "{{input}}", "-frames:v", "1", "{{output}}"],
+      "fields": [
+        { "key": "time", "label": "时间点", "value": "00:00:05" },
+        { "key": "input", "label": "输入视频", "value": "input.mp4" },
+        { "key": "output", "label": "输出图片", "value": "cover.jpg" }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "ffmpeg-compress",
+      "tool": "ffmpeg",
+      "title": "压缩视频体积",
+      "summary": "CRF 28 比默认更省空间，画质略有下降。",
+      "argv": ["-y", "-i", "{{input}}", "-vcodec", "libx264", "-crf", "28", "{{output}}"],
+      "fields": [
+        { "key": "input", "label": "输入文件", "value": "input.mp4" },
+        { "key": "output", "label": "输出文件", "value": "small.mp4" }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "ffprobe-streams",
+      "tool": "ffprobe",
+      "title": "查看音视频流信息（JSON）",
+      "summary": "列出编码格式、分辨率等，适合快速确认文件结构。",
+      "argv": ["-v", "error", "-show_entries", "stream=index,codec_name,codec_type,width,height", "-of", "json", "{{input}}"],
+      "fields": [
+        { "key": "input", "label": "媒体文件", "value": "input.mp4" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "ffprobe-duration",
+      "tool": "ffprobe",
+      "title": "查看时长、大小与码率",
+      "argv": ["-v", "error", "-show_entries", "format=duration,size,bit_rate", "-of", "default=noprint_wrappers=1", "{{input}}"],
+      "fields": [
+        { "key": "input", "label": "媒体文件", "value": "input.mp4" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "photorec-recover",
+      "tool": "photorec",
+      "title": "从磁盘/镜像恢复已删除文件",
+      "summary": "交互式 TUI，必须在 Terminal 中运行。恢复结果写入目标目录，请勿写入待恢复的磁盘。",
+      "argv": ["/d", "{{destination}}", "/cmd", "{{device}}", "search"],
+      "fields": [
+        { "key": "destination", "label": "恢复文件存放目录", "value": "$HOME/Recovered", "hint": "必须与待恢复磁盘不同" },
+        { "key": "device", "label": "设备或镜像路径", "value": "/dev/disk2s1", "hint": "用 diskutil list 确认" }
+      ],
+      "risk": "danger",
+      "interactive": true
+    },
+    {
+      "id": "testdisk-repair",
+      "tool": "testdisk",
+      "title": "检查/修复分区表",
+      "summary": "交互式 TUI，必须在 Terminal 中运行。写分区表有数据风险，操作前先备份。",
+      "argv": ["{{device}}"],
+      "fields": [
+        { "key": "device", "label": "设备路径", "value": "/dev/disk2" }
+      ],
+      "risk": "danger",
+      "interactive": true
+    },
+    {
+      "id": "rg-search",
+      "tool": "rg",
+      "title": "递归搜索文本并显示行号",
+      "argv": ["-n", "--color", "never", "{{pattern}}", "{{path}}"],
+      "fields": [
+        { "key": "pattern", "label": "搜索内容", "value": "TODO" },
+        { "key": "path", "label": "搜索路径", "value": "." }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "rg-case-insensitive",
+      "tool": "rg",
+      "title": "忽略大小写搜索",
+      "argv": ["-i", "-n", "--color", "never", "{{pattern}}", "{{path}}"],
+      "fields": [
+        { "key": "pattern", "label": "搜索内容", "value": "error" },
+        { "key": "path", "label": "搜索路径", "value": "." }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "rg-files-by-ext",
+      "tool": "rg",
+      "title": "按扩展名列出文件",
+      "argv": ["--files", "-g", "{{glob}}", "{{path}}"],
+      "fields": [
+        { "key": "glob", "label": "文件通配符", "value": "*.swift" },
+        { "key": "path", "label": "搜索路径", "value": "." }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "rg-context",
+      "tool": "rg",
+      "title": "搜索并显示上下文",
+      "argv": ["-n", "-C", "{{lines}}", "--color", "never", "{{pattern}}", "{{path}}"],
+      "fields": [
+        { "key": "lines", "label": "上下文行数", "value": "3" },
+        { "key": "pattern", "label": "搜索内容", "value": "import" },
+        { "key": "path", "label": "搜索路径", "value": "." }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "jq-pretty",
+      "tool": "jq",
+      "title": "格式化并高亮 JSON",
+      "argv": [".", "{{file}}"],
+      "fields": [
+        { "key": "file", "label": "JSON 文件", "value": "data.json" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "jq-select",
+      "tool": "jq",
+      "title": "提取指定字段",
+      "argv": ["-r", ".{{key}}", "{{file}}"],
+      "fields": [
+        { "key": "key", "label": "字段名", "value": "name" },
+        { "key": "file", "label": "JSON 文件", "value": "data.json" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "jq-first",
+      "tool": "jq",
+      "title": "取数组第一个元素",
+      "argv": ["-r", ".[0]", "{{file}}"],
+      "fields": [
+        { "key": "file", "label": "JSON 文件", "value": "data.json" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "jq-filter",
+      "tool": "jq",
+      "title": "按条件过滤对象",
+      "argv": ["-c", "select({{condition}})", "{{file}}"],
+      "fields": [
+        { "key": "condition", "label": "过滤条件", "value": ".status == \"ok\"" },
+        { "key": "file", "label": "JSON 文件", "value": "data.json" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "ytdlp-video",
+      "tool": "yt-dlp",
+      "title": "下载最佳画质视频",
+      "argv": ["-f", "bestvideo+bestaudio/best", "-o", "{{output}}", "{{url}}"],
+      "fields": [
+        { "key": "output", "label": "输出名模板", "value": "%(title)s.%(ext)s" },
+        { "key": "url", "label": "视频链接", "value": "https://example.com/watch" }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "ytdlp-audio",
+      "tool": "yt-dlp",
+      "title": "仅下载音频并转 MP3",
+      "argv": ["-x", "--audio-format", "mp3", "-o", "{{output}}", "{{url}}"],
+      "fields": [
+        { "key": "output", "label": "输出名模板", "value": "%(title)s.%(ext)s" },
+        { "key": "url", "label": "视频链接", "value": "https://example.com/watch" }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "ytdlp-formats",
+      "tool": "yt-dlp",
+      "title": "列出可用清晰度",
+      "argv": ["-F", "{{url}}"],
+      "fields": [
+        { "key": "url", "label": "视频链接", "value": "https://example.com/watch" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "curl-get",
+      "tool": "curl",
+      "title": "下载文件（跟随重定向）",
+      "argv": ["-L", "-o", "{{output}}", "{{url}}"],
+      "fields": [
+        { "key": "output", "label": "保存为", "value": "download.bin" },
+        { "key": "url", "label": "下载地址", "value": "https://example.com/file" }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "curl-headers",
+      "tool": "curl",
+      "title": "只查看响应头",
+      "argv": ["-I", "-L", "{{url}}"],
+      "fields": [
+        { "key": "url", "label": "目标地址", "value": "https://example.com" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "tar-create",
+      "tool": "tar",
+      "title": "打包并 gzip 压缩",
+      "argv": ["-czf", "{{output}}", "{{source}}"],
+      "fields": [
+        { "key": "output", "label": "压缩包", "value": "archive.tar.gz" },
+        { "key": "source", "label": "要打包的目录", "value": "project" }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "tar-extract",
+      "tool": "tar",
+      "title": "解压到指定目录",
+      "argv": ["-xzf", "{{archive}}", "-C", "{{destination}}"],
+      "fields": [
+        { "key": "archive", "label": "压缩包", "value": "archive.tar.gz" },
+        { "key": "destination", "label": "目标目录", "value": "." }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "tar-list",
+      "tool": "tar",
+      "title": "查看压缩包内容（不解压）",
+      "argv": ["-tzf", "{{archive}}"],
+      "fields": [
+        { "key": "archive", "label": "压缩包", "value": "archive.tar.gz" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "find-by-name",
+      "tool": "find",
+      "title": "按文件名查找",
+      "argv": ["{{path}}", "-type", "f", "-name", "{{pattern}}"],
+      "fields": [
+        { "key": "path", "label": "查找目录", "value": "." },
+        { "key": "pattern", "label": "文件名通配符", "value": "*.log" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "find-large",
+      "tool": "find",
+      "title": "查找超过指定大小的文件",
+      "argv": ["{{path}}", "-type", "f", "-size", "+{{size}}M"],
+      "fields": [
+        { "key": "path", "label": "查找目录", "value": "." },
+        { "key": "size", "label": "大于（MB）", "value": "100" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "sed-replace-preview",
+      "tool": "sed",
+      "title": "预览替换结果（不修改文件）",
+      "summary": "只打印会被替换的行，安全预览；加 -i 才会写文件。",
+      "argv": ["-n", "s/{{old}}/{{new}}/gp", "{{file}}"],
+      "fields": [
+        { "key": "old", "label": "原文本", "value": "foo" },
+        { "key": "new", "label": "新文本", "value": "bar" },
+        { "key": "file", "label": "目标文件", "value": "notes.txt" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "git-status",
+      "tool": "git",
+      "title": "查看简洁状态",
+      "argv": ["status", "--short"],
+      "fields": [],
+      "risk": "safe"
+    },
+    {
+      "id": "git-log",
+      "tool": "git",
+      "title": "查看最近提交",
+      "argv": ["--no-pager", "log", "--oneline", "-{{count}}"],
+      "fields": [
+        { "key": "count", "label": "提交条数", "value": "10" }
+      ],
+      "risk": "safe"
+    },
+    {
+      "id": "git-diff-stat",
+      "tool": "git",
+      "title": "查看改动统计",
+      "argv": ["--no-pager", "diff", "--stat"],
+      "fields": [],
+      "risk": "safe"
+    },
+    {
+      "id": "magick-resize",
+      "tool": "magick",
+      "title": "按比例缩放图片",
+      "argv": ["{{input}}", "-resize", "{{size}}", "{{output}}"],
+      "fields": [
+        { "key": "input", "label": "输入图片", "value": "input.png" },
+        { "key": "size", "label": "尺寸", "value": "800x800" },
+        { "key": "output", "label": "输出图片", "value": "output.png" }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "magick-convert",
+      "tool": "magick",
+      "title": "转换图片格式",
+      "argv": ["{{input}}", "{{output}}"],
+      "fields": [
+        { "key": "input", "label": "输入图片", "value": "input.png" },
+        { "key": "output", "label": "输出图片", "value": "output.webp" }
+      ],
+      "risk": "write"
+    },
+    {
+      "id": "python3-version",
+      "tool": "python3",
+      "title": "查看 Python 版本",
+      "argv": ["--version"],
+      "fields": [],
+      "risk": "safe"
+    },
+    {
+      "id": "node-version",
+      "tool": "node",
+      "title": "查看 Node 版本",
+      "argv": ["--version"],
+      "fields": [],
+      "risk": "safe"
+    },
+    {
+      "id": "ssh-connect",
+      "tool": "ssh",
+      "title": "连接远程主机",
+      "summary": "需要交互式终端与密码/密钥输入，在 Terminal 中打开。",
+      "argv": ["{{host}}"],
+      "fields": [
+        { "key": "host", "label": "user@host", "value": "user@example.com" }
+      ],
+      "risk": "safe",
+      "interactive": true
+    },
+    {
+      "id": "top-monitor",
+      "tool": "top",
+      "title": "实时查看进程占用",
+      "summary": "全屏交互程序，在 Terminal 中打开。",
+      "argv": [],
+      "fields": [],
+      "risk": "safe",
+      "interactive": true
+    }
+  ]
+}

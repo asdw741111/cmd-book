@@ -1,0 +1,315 @@
+import Foundation
+
+enum Headless {
+    static func scan(limit: Int?) {
+        let library = ExampleRepo.load()
+        let exampleTools = ExampleRepo.toolNames(in: library)
+        print("解析登录 PATH 并开始扫描…")
+        let snapshot = Scanner.scan(limit: limit, exampleTools: exampleTools) { done, total in
+            if done % 100 == 0 || done == total {
+                fputs("  已扫描 \(done)/\(total)\n", stderr)
+            }
+        }
+        do {
+            try Store.saveSnapshot(snapshot)
+        } catch {
+            fputs("快照写入失败: \(error)\n", stderr)
+        }
+
+        print("=== 扫描结果 ===")
+        print("PATH 条目      : \(snapshot.loginPath.split(separator: ":").count)")
+        print("发现工具       : \(snapshot.summary.discovered)")
+        print("实际扫描       : \(snapshot.summary.scanned)")
+        print("有用法文本     : \(snapshot.summary.withUsage)")
+        print("分类           : \(snapshot.summary.byCategory)")
+        print("用法来源       : \(snapshot.summary.bySource)")
+        for name in ["ffmpeg", "ffprobe", "photorec", "testdisk", "rg", "jq", "yt-dlp"] {
+            if let tool = snapshot.tools.first(where: { $0.name == name }) {
+                let preview = tool.usage.isEmpty ? "无" : "\(tool.usage.count) 字符"
+                print("  \(name.padding(toLength: 10, withPad: " ", startingAt: 0)) \(tool.category.rawValue.padding(toLength: 8, withPad: " ", startingAt: 0)) 用法=\(preview) man示例=\(!tool.manExamples.isEmpty) 交互=\(tool.interactive) 路径=\(tool.path)")
+            } else {
+                print("  \(name): 未发现")
+            }
+        }
+        print("中文说明       : \(snapshot.tools.filter { !$0.summaryZh.isEmpty }.count) / \(snapshot.tools.count) 个工具")
+        print("中文精确词条   : \(snapshot.tools.filter { !$0.titleZh.isEmpty && $0.titleZh != $0.name }.count) 个工具")
+        print("man EXAMPLES   : \(snapshot.tools.filter { !$0.manExamples.isEmpty }.count) 个工具")
+        print("快照文件       : \(AppPaths.snapshotURL.path)")
+    }
+
+    /// Query the real snapshot from the command line, using the same dictionary
+    /// and ranking as the GUI. Returns 1 when nothing matched.
+    static func search(query: String) -> Int32 {
+        guard var snapshot = Store.loadSnapshot() else {
+            print("没有快照，请先执行 --scan")
+            return 1
+        }
+        let dictionary = ChineseNotes.load()
+        snapshot.tools = snapshot.tools.map { tool in
+            var updated = tool
+            ChineseNotes.apply(&updated, dictionary: dictionary)
+            return updated
+        }
+        let pool = snapshot.tools.filter { $0.category == .user }
+        var hits = Search.sort(pool, query: query)
+        if hits.isEmpty {
+            hits = Search.sort(snapshot.tools, query: query)
+            if !hits.isEmpty { print("（当前筛选无结果，已扩大到全部工具）") }
+        }
+        print("搜索「\(query)」，命中 \(hits.count) 个：")
+        for tool in hits.prefix(10) {
+            let title = tool.titleZh.isEmpty ? tool.name : tool.titleZh
+            print("  \(tool.name) — \(title) [\(tool.categoryZh)]")
+        }
+        return hits.isEmpty ? 1 : 0
+    }
+
+    /// End-to-end check of the streaming whitelist runner (the GUI execution path).
+    static func runProbe() -> Int32 {
+        let tool = Tool(
+            name: "echo", path: "/bin/echo", allPaths: ["/bin/echo"],
+            category: .system, description: "", usage: "", usageSource: "none",
+            manExamples: "", interactive: false
+        )
+        let example = Example(
+            id: "probe-echo", tool: "echo", title: "流式执行验证", summary: nil,
+            argv: ["cmdbook-stream-ok"], fields: [], risk: "safe", interactive: nil
+        )
+        let request = RunRequest(
+            tool: tool, example: example, values: [:],
+            workingDirectory: URL(fileURLWithPath: NSHomeDirectory()),
+            loginPath: "/usr/bin:/bin:/usr/sbin:/sbin"
+        )
+
+        let lock = NSLock()
+        var output = ""
+        var status: Int32?
+        var wasKilled = false
+        let finished = DispatchSemaphore(value: 0)
+        let runner = RunningProcess()
+        runner.callbackQueue = DispatchQueue(label: "cmdbook.verify.callback")
+        runner.onOutput = { text in
+            lock.lock(); output += text; lock.unlock()
+        }
+        runner.onFinish = { code, killed in
+            lock.lock(); status = code; wasKilled = killed; lock.unlock()
+            finished.signal()
+        }
+
+        do {
+            try runner.start(request, timeout: 10)
+        } catch {
+            print("FAIL  流式执行器启动: \(error)")
+            return 1
+        }
+
+        let waited = withExtendedLifetime(runner) {
+            finished.wait(timeout: .now() + 12)
+        }
+        if waited == .timedOut {
+            print("FAIL  流式执行器超时（未收到完成回调）")
+            return 1
+        }
+
+        lock.lock()
+        let captured = output
+        let code = status
+        let killed = wasKilled
+        lock.unlock()
+
+        let passed = captured.contains("cmdbook-stream-ok") && code == 0 && !killed
+        if passed {
+            print("PASS  流式执行器（输出=\(captured.trimmingCharacters(in: .whitespacesAndNewlines))，退出码=0）")
+        } else {
+            print("FAIL  流式执行器 output=\(captured) status=\(String(describing: code)) killed=\(killed)")
+        }
+        return passed ? 0 : 1
+    }
+
+    static func verify() -> Int32 {
+        var failures: [String] = []
+        let library = ExampleRepo.load()
+
+        check(library.examples.count >= 30, "示例库载入（\(library.examples.count) 条）", &failures)
+        check(library.examples.contains { $0.tool == "ffmpeg" }, "ffmpeg 示例存在", &failures)
+        check(library.examples.contains { $0.tool == "photorec" }, "photorec 示例存在", &failures)
+
+        if let example = library.examples.first(where: { $0.id == "ffmpeg-to-mp4" }) {
+            let argv = try? Runner.expandedArguments(
+                example, values: ["input": "a.mov", "output": "b.mp4"]
+            )
+            check(argv?.contains("a.mov") == true && argv?.contains("b.mp4") == true,
+                  "占位符在 argv 元素内展开", &failures)
+            check(argv?.contains("libx264") == true, "静态参数原样保留", &failures)
+        } else {
+            check(false, "ffmpeg-to-mp4 存在", &failures)
+        }
+
+        let echoTool = Tool(
+            name: "echo", path: "/bin/echo", allPaths: ["/bin/echo"],
+            category: .system, description: "", usage: "", usageSource: "none",
+            manExamples: "", interactive: false
+        )
+        let dangerousTool = Tool(
+            name: "rm", path: "/bin/rm", allPaths: ["/bin/rm"],
+            category: .system, description: "", usage: "", usageSource: "none",
+            manExamples: "", interactive: false
+        )
+        let interactiveTool = Tool(
+            name: "photorec", path: "/opt/homebrew/bin/photorec", allPaths: [],
+            category: .user, description: "", usage: "", usageSource: "none",
+            manExamples: "", interactive: true
+        )
+        let echoExample = Example(
+            id: "verify-echo", tool: "echo", title: "验证输出", summary: nil,
+            argv: ["cmdbook-verify-ok"], fields: [], risk: "safe", interactive: nil
+        )
+
+        do {
+            try Runner.validate(tool: dangerousTool, example: echoExample)
+            check(false, "危险工具被拒绝", &failures)
+        } catch {
+            check(true, "危险工具被拒绝", &failures)
+        }
+        do {
+            try Runner.validate(tool: interactiveTool, example: echoExample)
+            check(false, "交互式工具被拒绝", &failures)
+        } catch {
+            check(true, "交互式工具被拒绝", &failures)
+        }
+        do {
+            try Runner.validate(tool: echoTool, example: echoExample)
+            check(true, "普通工具通过白名单校验", &failures)
+        } catch {
+            check(false, "普通工具通过白名单校验: \(error)", &failures)
+        }
+
+        let argv = (try? Runner.expandedArguments(echoExample, values: [:])) ?? []
+        let executed = ProcessSupport.run(
+            executable: "/bin/echo",
+            arguments: argv,
+            environment: ProcessSupport.probeEnvironment,
+            timeout: 5
+        )
+        check(executed.stdout.contains("cmdbook-verify-ok"), "进程执行与输出捕获", &failures)
+        check(executed.exitCode == 0, "退出码为 0", &failures)
+
+        let marker = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("cmdbook-probe-marker")
+        try? FileManager.default.removeItem(at: marker)
+        _ = ProcessSupport.run(
+            executable: "/usr/bin/touch",
+            arguments: ["cmdbook-probe-marker"],
+            environment: ProcessSupport.probeEnvironment,
+            timeout: 5
+        )
+        check(!FileManager.default.fileExists(atPath: marker.path),
+              "探测子进程工作目录隔离（不污染工作区）", &failures)
+        try? FileManager.default.removeItem(at: marker)
+
+        check(TextCleanup.stripOverstrike("N\u{08}NA\u{08}AM\u{08}ME\u{08}E") == "NAME",
+              "man 重字符清理", &failures)
+        check(TextCleanup.whatisDescription(
+                from: "photorec(8) - Recover lost files from harddisk", tool: "photorec"
+              ) == "Recover lost files from harddisk",
+              "whatis 摘要提取", &failures)
+        check(!Classifier.helpSkipNames.contains("photorec")
+                && Classifier.terminalOnlyNames.contains("photorec"),
+              "photorec 可探测帮助但禁止内嵌执行", &failures)
+        let manSample = """
+        NAME
+          demo - a demo tool
+        EXAMPLES
+          demo -v file.txt
+          demo --json out.json
+        SEE ALSO
+          other
+        """
+        let extracted = TextCleanup.manExamples(from: manSample)
+        check(extracted.contains("demo -v") && !extracted.contains("SEE ALSO"),
+              "man EXAMPLES 段提取", &failures)
+
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cmdbook-verify-\(UUID().uuidString)")
+        let binA = root.appendingPathComponent("a")
+        let binB = root.appendingPathComponent("b")
+        do {
+            try fileManager.createDirectory(at: binA, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: binB, withIntermediateDirectories: true)
+            for directory in [binA, binB] {
+                let file = directory.appendingPathComponent("same")
+                try "#!/bin/sh\necho ok\n".write(to: file, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+            }
+            try "not executable".write(
+                to: binA.appendingPathComponent("plain.txt"), atomically: true, encoding: .utf8
+            )
+            let (dirs, tools) = Scanner.discover(pathEnv: "\(binA.path):\(binB.path):\(binA.path)")
+            check(dirs.count == 2, "PATH 目录去重", &failures)
+            check(tools.count == 1 && tools.first?.name == "same", "basename 去重并跳过非可执行文件", &failures)
+            check(tools.first?.allPaths.count == 2, "allPaths 保留所有命中", &failures)
+        } catch {
+            check(false, "发现逻辑测试准备: \(error)", &failures)
+        }
+        try? fileManager.removeItem(at: root)
+
+        let dictionary = ChineseNotes.load()
+        check(dictionary.tools.count >= 100,
+              "中文词典载入（\(dictionary.tools.count) 条精确词条）", &failures)
+
+        var zhTool = interactiveTool
+        ChineseNotes.apply(&zhTool, dictionary: dictionary)
+        check(zhTool.keywords.contains("数据恢复"),
+              "photorec 含「数据恢复」中文关键词", &failures)
+        check(!zhTool.summaryZh.isEmpty && !zhTool.categoryZh.isEmpty,
+              "中文说明与中文分类非空", &failures)
+        check(Search.sort([echoTool, dangerousTool, zhTool], query: "数据恢复").first?.name == "photorec",
+              "搜索「数据恢复」命中 photorec", &failures)
+        check(Search.sort([echoTool, dangerousTool, zhTool], query: "文件恢复").first?.name == "photorec",
+              "搜索「文件恢复」命中 photorec", &failures)
+        var ffmpegTool = Tool(
+            name: "ffmpeg", path: "/opt/homebrew/bin/ffmpeg", allPaths: [],
+            category: .user, description: "", usage: "", usageSource: "none",
+            manExamples: "", interactive: false
+        )
+        ChineseNotes.apply(&ffmpegTool, dictionary: dictionary)
+        check(Search.sort([echoTool, ffmpegTool, zhTool], query: "转码").first?.name == "ffmpeg",
+              "搜索「转码」命中 ffmpeg", &failures)
+        check(Search.sort([echoTool, ffmpegTool, zhTool], query: "数据恢复").first?.name == "photorec",
+              "中文搜索不误命中无关工具", &failures)
+
+        var obscureTool = Tool(
+            name: "zz-obscure-bin", path: "/usr/bin/zz-obscure-bin", allPaths: [],
+            category: .system, description: "", usage: "", usageSource: "none",
+            manExamples: "", interactive: false
+        )
+        ChineseNotes.apply(&obscureTool, dictionary: dictionary)
+        check(!obscureTool.summaryZh.isEmpty && !obscureTool.categoryZh.isEmpty,
+              "无词条工具获得中文兜底说明", &failures)
+
+        let snapshot = Snapshot(
+            version: 1,
+            scannedAt: "2026-11-06T00:00:00Z",
+            loginPath: "/usr/bin:/bin",
+            summary: ScanSummary(),
+            tools: [echoTool]
+        )
+        let encoded = try? JSONEncoder().encode(snapshot)
+        let decoded = encoded.flatMap { try? JSONDecoder().decode(Snapshot.self, from: $0) }
+        check(decoded?.tools.first?.name == "echo", "快照 JSON 编解码", &failures)
+
+        print("=== 验证结果 ===")
+        if failures.isEmpty {
+            print("全部通过")
+        } else {
+            print("失败项：\(failures.joined(separator: "、"))")
+        }
+        return failures.isEmpty ? 0 : 1
+    }
+
+    private static func check(_ condition: Bool, _ label: String, _ failures: inout [String]) {
+        print("\(condition ? "PASS" : "FAIL")  \(label)")
+        if !condition { failures.append(label) }
+    }
+}
