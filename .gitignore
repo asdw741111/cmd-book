@@ -2,6 +2,9 @@
 # CmdBook — files that must NOT be pushed to a remote repository
 # ---------------------------------------------------------------------------
 
+# WorkBuddy per-user workspace state (memory logs, local settings)
+.workbuddy/
+
 # Build output. Rebuild with ./build.sh after cloning.
 dist/
 .build/

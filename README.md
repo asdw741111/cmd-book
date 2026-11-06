@@ -3,6 +3,8 @@
 扫描本机 `PATH` 上的命令行工具，生成带**中文说明**的可搜索索引，并提供可直接执行的常用示例。
 纯 Swift（SwiftUI + AppKit）：无 WebView、无本地服务器、无第三方依赖、全程离线、零网络请求。
 
+<img src="docs/cmdbook-icon.png" width="150" alt="CmdBook 应用图标">
+
 ![应用界面预览](docs/cmdbook-preview.png)
 
 ## 特性
