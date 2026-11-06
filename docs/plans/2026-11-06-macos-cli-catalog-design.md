@@ -119,6 +119,30 @@ Supersedes: `docs/design.md`（网页快照方案）、`docs/superpowers/plans/2
 当前筛选无结果时自动扩大到全部工具并在界面提示。
 `--verify` 与 `--search` 提供回归验证与命令行检索入口。
 
+## 交互性能（2026-11-06 卡顿修复）
+
+用户反馈「搜索和点击搜索结果不流畅」。用 `--bench` 量化后一次性输入/刷新为
+**1784 ms**（帧预算 16.7 ms），复现稳定。根因有两层：
+
+1. `Search.rank` 在主线程对 2101 个工具、合计约 335 万字符的 `usage` 文本逐条执行
+   `String.contains`；单次全量排序 186 ms，其中长文本匹配 135 ms。
+2. `AppModel.matches` / `scopeExpanded` 是纯计算属性，`SidebarView` 一次 body 求值会
+   访问约 6 次，每次又触发 3–4 次全量排序。点击结果时 `selectedName.didSet` 连发多个
+   `@Published`，触发多轮全树重算，因此点击同样卡。
+
+修复（先写失败的性能回归测试 `--bench`，确认 FAIL 后再改实现）：
+
+- `Sources/SearchIndex.swift`：加载快照时预建小写 UTF-8 `Data` 索引，查询改用
+  `Data.range(of:)` 字节匹配（实测 135 ms → 1.31 ms，约 100 倍）。
+- `Sources/AppModel.swift`：把 `matches` / `visibleMatches` / `scopeExpanded` /
+  `exactChineseCount` 改为存储属性，仅在 `query` / `filter` / `snapshot` 变化时重算一次；
+  `didSet` 保证选择结果不触发索引查询。
+- `Search.sort` 保留为 CLI 单次查询的便捷包装，排序逻辑不再重复实现。
+
+修复后 `--bench`：索引构建 36 ms（一次性）、单次查询 4.0 ms、输入刷新 3.9 ms、
+点击 0.7 ms，四项均在预算内。UI 自动化因系统未授予辅助功能权限无法驱动真实按键，
+但 `--bench` 走的是与按键相同的 `AppModel.query` 路径，界面渲染已用窗口截图核对。
+
 ## UI
 
 单个主窗口，`NavigationSplitView` 三栏：

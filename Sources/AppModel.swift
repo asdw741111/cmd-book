@@ -19,12 +19,21 @@ enum ToolFilter: String, CaseIterable, Identifiable {
 }
 
 final class AppModel: ObservableObject {
-    @Published var snapshot: Snapshot?
+    @Published var snapshot: Snapshot? {
+        didSet {
+            rebuildIndex()
+            recomputeResults()
+        }
+    }
     @Published var library = ExampleLibrary(version: 1, examples: [])
     @Published var chineseDictionary = ChineseDictionary.empty
     @Published var savedStore = SavedStore()
-    @Published var query = ""
-    @Published var filter: ToolFilter = .user
+    @Published var query = "" {
+        didSet { recomputeResults() }
+    }
+    @Published var filter: ToolFilter = .user {
+        didSet { recomputeResults() }
+    }
     @Published var selectedName: String? {
         didSet {
             guard selectedName != oldValue else { return }
@@ -48,40 +57,41 @@ final class AppModel: ObservableObject {
     @Published var exitText = ""
     @Published var confirmRun = false
 
+    // Search results are cached. SwiftUI reads `matches.count`, `visibleMatches`
+    // and `scopeExpanded` several times per body evaluation, so recomputing them
+    // as computed properties used to run a full 2101-tool sort up to 6 times per
+    // keystroke (~1.8 s). Now one query change performs exactly one lookup.
+    @Published private(set) var matches: [Tool] = []
+    @Published private(set) var visibleMatches: [Tool] = []
+    @Published private(set) var scopeExpanded = false
+    @Published private(set) var exactChineseCount = 0
+
     private var runner: RunningProcess?
+    private var searchIndex: SearchIndex?
     private let maxRendered = 300
 
     var tools: [Tool] { snapshot?.tools ?? [] }
     var selectedTool: Tool? { tools.first { $0.name == selectedName } }
 
-    /// Tools with a hand-written Chinese entry (others use prefix rules / fallback).
-    var exactChineseCount: Int {
-        tools.filter { chineseDictionary.tools[$0.name] != nil }.count
+    private func rebuildIndex() {
+        searchIndex = SearchIndex(tools: tools)
+        exactChineseCount = tools.filter {
+            chineseDictionary.tools[$0.name] != nil
+        }.count
     }
 
-    private var scopedTools: [Tool] {
-        switch filter {
-        case .user: return tools.filter { $0.category == .user }
-        case .system: return tools.filter { $0.category != .user }
-        case .all: return tools
+    private func recomputeResults() {
+        guard let index = searchIndex else {
+            matches = []
+            visibleMatches = []
+            scopeExpanded = false
+            return
         }
+        let outcome = index.results(query: query, filter: filter, limit: maxRendered)
+        matches = outcome.matches
+        visibleMatches = outcome.visible
+        scopeExpanded = outcome.scopeExpanded
     }
-
-    /// True when a query has no hits in the current scope but does have hits
-    /// across all tools, so the UI can widen the search instead of showing zero.
-    var scopeExpanded: Bool {
-        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        return Search.sort(scopedTools, query: query).isEmpty
-            && !Search.sort(tools, query: query).isEmpty
-    }
-
-    var matches: [Tool] {
-        let primary = Search.sort(scopedTools, query: query)
-        if scopeExpanded { return Search.sort(tools, query: query) }
-        return primary
-    }
-
-    var visibleMatches: [Tool] { Array(matches.prefix(maxRendered)) }
 
     var examplesForSelectedTool: [Example] {
         guard let name = selectedName else { return [] }

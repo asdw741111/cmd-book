@@ -111,6 +111,8 @@ Sources/
   Search.swift          纯函数中文优先搜索排序
   ProcessSupport.swift  子进程封装（临时文件捕获 + 硬超时 + 独立 CWD）、登录 PATH 解析
   Scanner.swift         PATH 发现、并发用法探测、中文说明写入快照
+  Search.swift          纯函数排序逻辑（基于预建索引的字节比较）
+  SearchIndex.swift     启动时预建的小写 UTF-8 索引 + 结果缓存
   TextCleanup.swift     ANSI/重字符清理、规范化、描述与 EXAMPLES 提取
   ExampleRepo.swift     内置示例库载入
   Runner.swift          白名单执行器、流式输出、Terminal 转交
@@ -147,11 +149,37 @@ $BIN --scan                  # 全量扫描并写入快照
 $BIN --scan --limit 50       # 限量扫描（调试）
 $BIN --search 数据恢复       # 对真实快照做中文检索（输出前 10 条）
 $BIN --search 转码
+$BIN --bench                # 交互性能回归测试（帧预算 16.7 ms）
 ```
 
 `--verify` 覆盖：示例库载入、占位符展开、危险/交互工具拦截、进程执行与输出捕获、
 探测子进程不污染工作区、man 重字符清理、`EXAMPLES` 段提取、PATH 去重、
 中文词典与「数据恢复 → photorec」搜索命中、快照编解码。
+
+## 性能设计
+
+早期版本在输入与点击时出现明显卡顿。实测根因：2101 个工具合计约 **335 万字符**
+的用法文本被逐条执行 `String.contains`（单次全量排序 186 ms，其中长文本匹配 135 ms）；
+而 `matches` / `scopeExpanded` 是纯计算属性，一次 SwiftUI body 求值会重复访问约 6 次，
+`--bench` 测得**每次交互 1784 ms**（60 fps 帧预算为 16.7 ms）。点击结果时
+`selectedName` 的 didSet 连发多个 `@Published`，又触发多轮全树重算，因此点击也卡。
+
+修复（`Sources/SearchIndex.swift` + `Sources/AppModel.swift`）：
+
+1. **预建索引**：快照加载时对每个工具的可搜索字段做一次 `lowercased()` 并转为 UTF-8
+   `Data`；查询时改用 `Data.range(of:)` 字节匹配。实测长文本匹配从 135 ms 降到 1.31 ms。
+2. **结果缓存**：`matches` / `visibleMatches` / `scopeExpanded` / `exactChineseCount`
+   改为存储属性，仅在 `query` / `filter` / `snapshot` 变化时计算一次；SwiftUI body 只读缓存。
+3. **点击不再重算搜索**：选择结果只更新详情与控制台状态，不触发索引查询。
+
+`--bench` 的四项预算（修复后实测）：
+
+| 指标 | 实测 | 预算 |
+|------|------|------|
+| 索引构建（仅启动/重扫一次） | 约 36 ms | 250 ms |
+| 单次索引查询（2101 工具） | 约 4.0 ms | 16.7 ms |
+| 输入 + 界面刷新 | 约 3.9 ms | 16.7 ms |
+| 点击选择结果 | 约 0.7 ms | 5 ms |
 
 ## 打包与分发
 

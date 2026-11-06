@@ -37,6 +37,88 @@ enum Headless {
         print("快照文件       : \(AppPaths.snapshotURL.path)")
     }
 
+    /// Performance regression test for the interactive search hot path.
+    /// "输入" simulates one SwiftUI body evaluation (the sidebar reads the match
+    /// list several times). "点击" simulates selecting a row. Budget is one 60 fps
+    /// frame (16.7 ms); selection has a tighter 5 ms budget because it should not
+    /// recompute the search at all.
+    static func bench() -> Int32 {
+        let model = AppModel()
+        model.load()
+        guard let snapshot = model.snapshot else {
+            print("没有快照，请先执行 --scan")
+            return 1
+        }
+
+        let indexStart = CFAbsoluteTimeGetCurrent()
+        let index = SearchIndex(tools: snapshot.tools)
+        let indexMs = (CFAbsoluteTimeGetCurrent() - indexStart) * 1000
+
+        let queries = ["数据恢复", "ff", "转码", "压缩", "zzzz不存在"]
+        for _ in 0..<3 { _ = index.results(query: "数据恢复", filter: .user, limit: 300) }
+        let queryStart = CFAbsoluteTimeGetCurrent()
+        let queryRounds = 30
+        for _ in 0..<queryRounds {
+            for query in queries {
+                _ = index.results(query: query, filter: .user, limit: 300)
+            }
+        }
+        let queryMs = (CFAbsoluteTimeGetCurrent() - queryStart)
+            / Double(queryRounds * queries.count) * 1000
+
+        func oneInput(_ query: String) {
+            model.query = query
+            for _ in 0..<6 { _ = model.matches.count }
+            _ = model.visibleMatches.count
+            _ = model.scopeExpanded
+            _ = model.exactChineseCount
+        }
+        for query in queries { oneInput(query) }
+        let inputStart = CFAbsoluteTimeGetCurrent()
+        let inputRounds = 10
+        for _ in 0..<inputRounds {
+            for query in queries { oneInput(query) }
+        }
+        let inputMs = (CFAbsoluteTimeGetCurrent() - inputStart)
+            / Double(inputRounds * queries.count) * 1000
+
+        let names = ["photorec", "ffmpeg", "rg", "jq", "yt-dlp"]
+        func oneSelection(_ name: String) {
+            model.selectedName = name
+            for _ in 0..<6 { _ = model.matches.count }
+            _ = model.selectedTool?.name
+            _ = model.pendingCommandText
+            _ = model.examplesForSelectedTool.count
+        }
+        for name in names { oneSelection(name) }
+        let selectStart = CFAbsoluteTimeGetCurrent()
+        let selectRounds = 20
+        for _ in 0..<selectRounds {
+            for name in names { oneSelection(name) }
+        }
+        let selectMs = (CFAbsoluteTimeGetCurrent() - selectStart)
+            / Double(selectRounds * names.count) * 1000
+
+        func line(_ label: String, _ ms: Double, _ budget: Double) -> Bool {
+            let passed = ms < budget
+            let padded = label.padding(toLength: 20, withPad: " ", startingAt: 0)
+            print(padded + String(
+                format: "%8.2f ms  (预算 %5.2f ms)  %@",
+                ms, budget, passed ? "PASS" : "FAIL"
+            ))
+            return passed
+        }
+
+        print("tools=\(snapshot.tools.count)")
+        var passed = true
+        passed = line("索引构建（仅一次）", indexMs, 250) && passed
+        passed = line("单次索引查询", queryMs, 16.7) && passed
+        passed = line("输入 + 界面刷新", inputMs, 16.7) && passed
+        passed = line("点击选择结果", selectMs, 5.0) && passed
+        print(passed ? "性能回归：全部通过" : "性能回归：未通过")
+        return passed ? 0 : 1
+    }
+
     /// Query the real snapshot from the command line, using the same dictionary
     /// and ranking as the GUI. Returns 1 when nothing matched.
     static func search(query: String) -> Int32 {

@@ -4,6 +4,10 @@ import Darwin
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 
+if arguments.contains("--bench") {
+    exit(Headless.bench())
+}
+
 if let searchIndex = arguments.firstIndex(of: "--search"),
    searchIndex + 1 < arguments.count {
     exit(Headless.search(query: arguments[searchIndex + 1]))
