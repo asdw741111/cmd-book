@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1360" height="500" viewBox="0 0 680 250" font-family="-apple-system, PingFang SC, Helvetica, sans-serif">
+<rect width="680" height="250" fill="#ffffff"/>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+<text x="40" y="46" font-size="12" font-weight="500" fill="#501313" dominant-baseline="central">修复前 · 每次按键</text>
+<rect x="40" y="60" width="110" height="56" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="95" y="80" font-size="13" font-weight="500" fill="#501313" text-anchor="middle" dominant-baseline="central">一次按键</text>
+<text x="95" y="100" font-size="11" fill="#791F1F" text-anchor="middle" dominant-baseline="central">query 改变</text>
+<line x1="152" y1="88" x2="186" y2="88" stroke="#A32D2D" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="190" y="60" width="130" height="56" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="255" y="80" font-size="13" font-weight="500" fill="#501313" text-anchor="middle" dominant-baseline="central">body 求值 ×6</text>
+<text x="255" y="100" font-size="11" fill="#791F1F" text-anchor="middle" dominant-baseline="central">计算属性被反复读</text>
+<line x1="322" y1="88" x2="356" y2="88" stroke="#A32D2D" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="360" y="60" width="140" height="56" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="430" y="80" font-size="13" font-weight="500" fill="#501313" text-anchor="middle" dominant-baseline="central">全量排序 ×18</text>
+<text x="430" y="100" font-size="11" fill="#791F1F" text-anchor="middle" dominant-baseline="central">335 万字符扫描</text>
+<line x1="502" y1="88" x2="536" y2="88" stroke="#A32D2D" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="540" y="60" width="100" height="56" rx="8" fill="#F7C1C1" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="590" y="88" font-size="15" font-weight="500" fill="#501313" text-anchor="middle" dominant-baseline="central">1784 ms</text>
+<text x="40" y="152" font-size="12" font-weight="500" fill="#04342C" dominant-baseline="central">修复后 · 每次按键</text>
+<rect x="40" y="166" width="110" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="95" y="186" font-size="13" font-weight="500" fill="#04342C" text-anchor="middle" dominant-baseline="central">一次按键</text>
+<text x="95" y="206" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">query 改变</text>
+<line x1="152" y1="194" x2="186" y2="194" stroke="#0F6E56" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="190" y="166" width="130" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="255" y="186" font-size="13" font-weight="500" fill="#04342C" text-anchor="middle" dominant-baseline="central">只读缓存</text>
+<text x="255" y="206" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">body 不再计算</text>
+<line x1="322" y1="194" x2="356" y2="194" stroke="#0F6E56" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="360" y="166" width="140" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="430" y="186" font-size="13" font-weight="500" fill="#04342C" text-anchor="middle" dominant-baseline="central">字节索引 ×1</text>
+<text x="430" y="206" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">Data.range(of:)</text>
+<line x1="502" y1="194" x2="536" y2="194" stroke="#0F6E56" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="540" y="166" width="100" height="56" rx="8" fill="#9FE1CB" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="590" y="194" font-size="15" font-weight="500" fill="#04342C" text-anchor="middle" dominant-baseline="central">3.9 ms</text>
+</svg>

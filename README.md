@@ -101,34 +101,37 @@ open dist/CmdBook.app       # 启动
 
 ```
 Sources/
-  main.swift            入口；含 --scan / --verify / --runprobe 无界面模式
+  main.swift            入口；--scan / --verify / --runprobe / --search / --bench
   AppDelegate.swift     NSApplication 生命周期、主菜单与快捷键
-  AppModel.swift        状态、中文词典套用、筛选、扫描调度、执行编排
+  AppModel.swift        状态、中文词典套用、搜索结果缓存、扫描调度、执行编排
   ContentView.swift     SwiftUI 三栏界面（列表 / 详情 / 运行控制台）
   Models.swift          数据模型（含向后兼容的解码器）
   Paths.swift           应用目录、资源定位、来源分类、交互/危险工具名单
   ChineseNotes.swift    中文词典载入与三层说明生成
-  Search.swift          纯函数中文优先搜索排序
+  SearchIndex.swift     启动时预建的小写 UTF-8 字节索引
+  Search.swift          基于索引的纯函数中文优先排序
   ProcessSupport.swift  子进程封装（临时文件捕获 + 硬超时 + 独立 CWD）、登录 PATH 解析
   Scanner.swift         PATH 发现、并发用法探测、中文说明写入快照
-  Search.swift          纯函数排序逻辑（基于预建索引的字节比较）
-  SearchIndex.swift     启动时预建的小写 UTF-8 索引 + 结果缓存
   TextCleanup.swift     ANSI/重字符清理、规范化、描述与 EXAMPLES 提取
   ExampleRepo.swift     内置示例库载入
   Runner.swift          白名单执行器、流式输出、Terminal 转交
   Store.swift           快照与保存项读写（原子写入）
-  Headless.swift        无界面扫描、自检、中文搜索回归
+  Headless.swift        无界面扫描、自检、中文搜索、性能基准
 Scripts/
   MakeIcon.swift        Core Graphics 自绘 1024×1024 图标
+  MakePerfDiagram.swift 自绘文章配图（1360×500 PNG）
 Resources/
   Info.plist            .app 包元数据（含 CFBundleIconFile）
   examples.json         内置精选示例库（38 条 / 17 工具）
-  tool-zh.json          中文元数据词典
+  tool-zh.json          中文元数据词典（221 精确词条 / 215 规则 / 分类兜底）
   CmdBook.icns          生成好的应用图标（提交进仓库，clone 后无需重画）
 build.sh                swiftc 编译 + 组包 + ad-hoc 签名
 make-icon.sh            重新生成 CmdBook.icns
-docs/plans/2026-11-06-macos-cli-catalog-design.md   现行设计文档
-docs/cmdbook-preview.png                             界面预览图
+docs/
+  plans/2026-11-06-macos-cli-catalog-design.md   现行设计文档
+  cmdbook-preview.png / cmdbook-icon.png         界面与图标预览
+  wechat-article-search-perf.md                  技术复盘文章（公众号成稿）
+  article-assets/perf-chain.png / .svg           文章配图与源文件
 ```
 
 ## 数据与验证
@@ -250,14 +253,14 @@ xattr -cr dist/CmdBook.app
 
 ## 推送远程仓库
 
-`.gitignore` 已排除构建产物、图标中间文件、运行时快照与密钥类文件。推送前建议：
+`.gitignore` 已排除构建产物（`dist/`、`.build/`、`.app/`、`.dmg/.zip/.pkg`）、
+图标中间目录、运行时快照、密钥类文件与 WorkBuddy 本地状态。远程已配置为 `origin`：
 
 ```sh
-git status --short                 # 确认没有 dist/、.build/、.DS_Store、密钥文件
-git add .
-git commit -m "feat: CmdBook macOS 原生命令行工具手册"
-git remote add origin git@github.com:<user>/<repo>.git   # 或 https 地址
-git push -u origin main
+git status --short        # 推送前应为 clean
+git add -A
+git commit -m "..."
+git push origin main      # 首次可用 git push -u origin main
 ```
 
 **注意**：本仓库不含任何硬编码凭证；若将来为公证配置 App 专用密码，请用
@@ -283,8 +286,14 @@ git push -u origin main
   详情仍以原始英文用法文本为准。
 - `man` 的 `EXAMPLES` 段并非所有工具都有，内置示例库是主力数据源。
 
-## 旧文件
+## 仓库维护
 
-`index.html`、`css/`、`js/`、`tests/`、`docs/design.md`、
-`docs/superpowers/plans/` 来自此前的 DevOps 监控面板示例与已废弃的网页方案，
-与 CmdBook 无关，暂作历史记录保留，确认后可清理。
+历史遗留文件（旧 DevOps 监控面板的 `index.html` / `css/` / `js/` / `tests/`，
+以及已废弃的 `docs/design.md`、`docs/superpowers/plans/`）已于 2026-11-06 清理，
+仓库只保留 CmdBook 本体、现行设计文档与文章素材。
+
+这些文件仍可从 git 历史恢复（`git checkout <旧提交> -- <路径>`），另有一份独立备份：
+`~/Library/Application Support/CmdBook/legacy-backup-2026-11-06.tar.gz`。
+
+本地 `dist/`（构建产物，应用在其中运行）与 `.build/`（图标中间文件）属于可再生产物，
+已由 `.gitignore` 排除，不进仓库；需要时执行 `./build.sh` 与 `./make-icon.sh` 重建。
