@@ -32,6 +32,14 @@ struct RunRequest {
     var loginPath: String
 }
 
+/// How a selected example is allowed to run. `risk` drives real behaviour, not
+/// just a badge in the UI.
+enum ExecutionPolicy: Equatable {
+    case inApp
+    case confirmWrite
+    case terminalOnly
+}
+
 enum Runner {
     /// Expands `{{key}}` placeholders inside individual argv elements only.
     /// No shell string is ever constructed for the in-app runner.
@@ -65,16 +73,30 @@ enum Runner {
         return output
     }
 
-    static func validate(tool: Tool, example: Example) throws {
+    /// Safety checks that apply to EVERY path, including Terminal hand-off.
+    static func validateSafety(tool: Tool) throws {
         if Classifier.isDangerous(tool.name) {
             throw RunnerError.dangerousTool(tool.name)
-        }
-        if tool.interactive || example.isInteractive {
-            throw RunnerError.interactiveTool(tool.name)
         }
         if !FileManager.default.isExecutableFile(atPath: tool.path) {
             throw RunnerError.missingExecutable(tool.path)
         }
+    }
+
+    /// Validation for in-app execution: safety plus "must not be interactive".
+    static func validate(tool: Tool, example: Example) throws {
+        try validateSafety(tool: tool)
+        if tool.interactive || example.isInteractive {
+            throw RunnerError.interactiveTool(tool.name)
+        }
+    }
+
+    static func policy(for tool: Tool, example: Example) -> ExecutionPolicy {
+        if example.isInteractive || tool.interactive || example.risk == "danger" {
+            return .terminalOnly
+        }
+        if example.risk == "write" { return .confirmWrite }
+        return .inApp
     }
 }
 
@@ -234,16 +256,30 @@ final class RunningProcess {
 }
 
 enum TerminalBridge {
-    static func open(argv: [String], loginPath: String) throws {
+    /// Pure script builder so the safety behaviour can be unit tested without
+    /// actually launching Terminal.
+    static func script(
+        argv: [String], loginPath: String, workingDirectory: URL
+    ) -> String {
         let quoted = argv.map(shellQuote).joined(separator: " ")
-        let script = """
+        return """
         #!/bin/zsh
         export PATH=\(shellQuote(loginPath))
+        cd \(shellQuote(workingDirectory.path)) || exit 1
         \(quoted)
         echo
         echo "命令已结束。可关闭此窗口。"
+        rm -f -- "$0"
         exec zsh
         """
+    }
+
+    static func open(
+        argv: [String], loginPath: String, workingDirectory: URL
+    ) throws {
+        let script = TerminalBridge.script(
+            argv: argv, loginPath: loginPath, workingDirectory: workingDirectory
+        )
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("cmdbook-\(UUID().uuidString).command")
         try script.write(to: url, atomically: true, encoding: .utf8)

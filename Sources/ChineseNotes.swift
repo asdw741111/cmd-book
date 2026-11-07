@@ -39,9 +39,12 @@ enum ChineseNotes {
     static func load() -> ChineseDictionary {
         guard let url = AppPaths.resourceURL(name: "tool-zh", extension: "json"),
               let data = try? Data(contentsOf: url),
-              let dictionary = try? JSONDecoder().decode(ChineseDictionary.self, from: data) else {
+              var dictionary = try? JSONDecoder().decode(ChineseDictionary.self, from: data) else {
             return .empty
         }
+        // `notes(for:)` returns on the first matching prefix. Sort longest-first
+        // so a specific rule (`gif2webp`) is not shadowed by a generic one (`gif`).
+        dictionary.rules.sort { $0.prefix.count > $1.prefix.count }
         return dictionary
     }
 

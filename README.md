@@ -46,9 +46,10 @@ cd command
 open dist/CmdBook.app       # 启动
 ```
 
-`build.sh` 做四件事：用 `swiftc` 编译 `Sources/*.swift`、复制 `Info.plist` 与
-`examples.json` / `tool-zh.json` / `CmdBook.icns` 到 `.app` 包、写 `PkgInfo`、
-执行 `codesign -s -` 临时签名。
+`build.sh` 做四件事：用 `swiftc -O -swift-version 5 -target arm64-apple-macosx13.0`
+编译 `Sources/*.swift`、复制 `Info.plist` 与 `examples.json` / `tool-zh.json` /
+`CmdBook.icns` 到 `.app` 包、写 `PkgInfo`、执行 `codesign -s -` 临时签名。
+`-O` 是发布构建必需项，去掉会让 `--bench` 的实测数字与实际分发包不一致。
 
 首次启动会自动扫描一次；之后用「重新扫描」按钮或 `⌘R` 更新索引。
 `⌘F` 聚焦搜索，`Esc` 清空查询，方向键移动选择。左侧可在
@@ -89,8 +90,10 @@ open dist/CmdBook.app       # 启动
 （多为第三方库自带的测试程序）使用分类兜底；2101 个工具 **100% 具备中文说明与中文分类**。
 若当前筛选范围内没有命中，应用会自动扩大到全部工具并在侧栏提示。
 
-**扩充中文说明**：直接编辑 `Resources/tool-zh.json` 的 `tools` 字典即可，不需要改 Swift 代码、
-不需要重新编译；重启应用会重新套用词典。若要把中文一并写入快照文件，再执行一次 `--scan`。
+**扩充中文说明**：编辑 `Resources/tool-zh.json` 的 `tools` 字典后需要重新执行 `./build.sh`
+重新组包——已构建的 `.app` 读取的是 bundle 内副本，且 ad-hoc 签名封印了包内资源，
+仅重启应用不会生效。改词典不需要改 Swift 代码；应用启动时会把词典重新套用到快照。
+前缀规则按长度降序匹配，因此 `gif2webp` 不会被通用 `gif` 规则遮蔽。
 
 **搜索排序**（`Sources/Search.swift`，纯函数、可单测）：
 中文关键词精确命中 > 中文名称/分类命中 > 关键词子串 > 英文名称前缀/子串 >
@@ -146,10 +149,10 @@ docs/
 无界面命令（`BIN=dist/CmdBook.app/Contents/MacOS/CmdBook`）：
 
 ```sh
-$BIN --verify                # 27 项自检，含中文搜索与工作目录隔离回归
+$BIN --verify                # 38 项自检，含中文搜索、工作目录隔离、快照保护与执行策略
 $BIN --runprobe              # 流式执行器端到端验证
 $BIN --scan                  # 全量扫描并写入快照
-$BIN --scan --limit 50       # 限量扫描（调试）
+$BIN --scan --limit 50       # 限量调试扫描，写入 tools-debug.json，绝不覆盖生产索引
 $BIN --search 数据恢复       # 对真实快照做中文检索（输出前 10 条）
 $BIN --search 转码
 $BIN --bench                # 交互性能回归测试（帧预算 16.7 ms）
@@ -157,7 +160,17 @@ $BIN --bench                # 交互性能回归测试（帧预算 16.7 ms）
 
 `--verify` 覆盖：示例库载入、占位符展开、危险/交互工具拦截、进程执行与输出捕获、
 探测子进程不污染工作区、man 重字符清理、`EXAMPLES` 段提取、PATH 去重、
-中文词典与「数据恢复 → photorec」搜索命中、快照编解码。
+中文词典与「数据恢复 → photorec」搜索命中、最长前缀规则、`risk` 执行策略、
+Terminal 脚本的工作目录与自删除、退化快照拒绝覆盖、快照编解码。
+
+**快照保护**：限量扫描写入独立的 `tools-debug.json`；全量扫描若工具数或用法文本数
+比上一份下降超过 10%（例如触发 180 秒全局超时），会拒绝写入并保留 last-good 索引，
+界面给出可见提示而不会用退化结果替换内存状态。
+
+**执行策略**：`risk` 不只是标签——`safe` 在应用内执行，`write` 的确认按钮变为
+「确认写入」并给出覆盖警告，`danger` 与交互式工具一律转交 Terminal。
+Terminal 路径同样执行危险名单与可执行文件校验，生成的 `.command` 会切换到
+界面所选工作目录并在退出时自删除。
 
 ## 性能设计
 
@@ -179,10 +192,12 @@ $BIN --bench                # 交互性能回归测试（帧预算 16.7 ms）
 
 | 指标 | 实测 | 预算 |
 |------|------|------|
-| 索引构建（仅启动/重扫一次） | 约 36 ms | 250 ms |
-| 单次索引查询（2101 工具） | 约 4.0 ms | 16.7 ms |
-| 输入 + 界面刷新 | 约 3.9 ms | 16.7 ms |
-| 点击选择结果 | 约 0.7 ms | 5 ms |
+| 索引构建（仅启动/重扫一次） | 约 34 ms | 250 ms |
+| 单次索引查询（2101 工具） | 约 2.5 ms | 16.7 ms |
+| 输入 + 界面刷新 | 约 2.4 ms | 16.7 ms |
+| 点击选择结果 | 约 0.5 ms | 5 ms |
+
+上表为启用 `-O` 的发布构建实测值；早期的 4.0 / 3.9 / 0.7 ms 来自未优化的 `-Onone` 构建。
 
 ## 打包与分发
 

@@ -10,10 +10,16 @@ enum Headless {
                 fputs("  已扫描 \(done)/\(total)\n", stderr)
             }
         }
+        // A limited scan is a debug aid: never let it overwrite the app's index.
+        let destination = limit == nil ? AppPaths.snapshotURL : Store.debugSnapshotURL
+        var saved = false
+        var writeError: String?
         do {
-            try Store.saveSnapshot(snapshot)
+            saved = try Store.saveSnapshot(
+                snapshot, to: destination, protectExisting: limit == nil
+            )
         } catch {
-            fputs("快照写入失败: \(error)\n", stderr)
+            writeError = error.localizedDescription
         }
 
         print("=== 扫描结果 ===")
@@ -34,7 +40,16 @@ enum Headless {
         print("中文说明       : \(snapshot.tools.filter { !$0.summaryZh.isEmpty }.count) / \(snapshot.tools.count) 个工具")
         print("中文精确词条   : \(snapshot.tools.filter { !$0.titleZh.isEmpty && $0.titleZh != $0.name }.count) 个工具")
         print("man EXAMPLES   : \(snapshot.tools.filter { !$0.manExamples.isEmpty }.count) 个工具")
-        print("快照文件       : \(AppPaths.snapshotURL.path)")
+        if let limit = limit {
+            print("调试快照       : \(destination.path)（限量 \(limit) 个工具，不影响生产索引）")
+        } else if let writeError = writeError {
+            print("写入失败       : \(writeError)（已保留原有索引）")
+        } else if !saved {
+            print("写入被拒绝     : 本次结果明显差于上一份（工具数或用法文本数下降超过 10%），已保留原有索引")
+        } else {
+            print("快照文件       : \(destination.path)")
+        }
+        if let writeError = writeError { fputs("快照写入失败: \(writeError)\n", stderr) }
     }
 
     /// Performance regression test for the interactive search hot path.
@@ -369,6 +384,85 @@ enum Headless {
         ChineseNotes.apply(&obscureTool, dictionary: dictionary)
         check(!obscureTool.summaryZh.isEmpty && !obscureTool.categoryZh.isEmpty,
               "无词条工具获得中文兜底说明", &failures)
+
+        // Longest-prefix rule ordering: `gif2webp` must not be shadowed by `gif`.
+        var gifTool = Tool(
+            name: "gif2webp", path: "/opt/homebrew/bin/gif2webp", allPaths: [],
+            category: .user, description: "", usage: "", usageSource: "none",
+            manExamples: "", interactive: false
+        )
+        ChineseNotes.apply(&gifTool, dictionary: dictionary)
+        check(gifTool.keywords.contains("GIF 转 WebP"),
+              "最长前缀命中：gif2webp 未被 gif 规则遮蔽", &failures)
+
+        // `risk` must drive real execution policy, not just the label.
+        let writeExample = Example(
+            id: "w", tool: "ffmpeg", title: "", summary: nil,
+            argv: [], fields: [], risk: "write", interactive: nil
+        )
+        let dangerExample = Example(
+            id: "d", tool: "photorec", title: "", summary: nil,
+            argv: [], fields: [], risk: "danger", interactive: true
+        )
+        let dangerPlain = Example(
+            id: "dp", tool: "echo", title: "", summary: nil,
+            argv: [], fields: [], risk: "danger", interactive: nil
+        )
+        check(Runner.policy(for: echoTool, example: echoExample) == .inApp,
+              "safe 示例在应用内执行", &failures)
+        check(Runner.policy(for: ffmpegTool, example: writeExample) == .confirmWrite,
+              "write 示例要求写入确认", &failures)
+        check(Runner.policy(for: interactiveTool, example: dangerExample) == .terminalOnly,
+              "danger 示例转交 Terminal", &failures)
+        check(Runner.policy(for: echoTool, example: dangerPlain) == .terminalOnly,
+              "非交互 danger 同样转交 Terminal", &failures)
+
+        // Terminal hand-off now validates and produces a self-cleaning script
+        // that runs in the user-selected working directory.
+        do {
+            try Runner.validateSafety(tool: dangerousTool)
+            check(false, "Terminal 路径拒绝危险工具", &failures)
+        } catch {
+            check(true, "Terminal 路径拒绝危险工具", &failures)
+        }
+        do {
+            try Runner.validateSafety(tool: echoTool)
+            check(true, "Terminal 路径放行普通工具", &failures)
+        } catch {
+            check(false, "Terminal 路径放行普通工具: \(error)", &failures)
+        }
+        let terminalScript = TerminalBridge.script(
+            argv: ["/bin/echo", "ok"], loginPath: "/usr/bin:/bin",
+            workingDirectory: URL(fileURLWithPath: "/tmp")
+        )
+        check(terminalScript.contains("cd '/tmp'"),
+              "Terminal 脚本注入工作目录", &failures)
+        check(terminalScript.contains("rm -f -- \"$0\""),
+              "Terminal 脚本自删除", &failures)
+
+        // A degraded scan must never overwrite the last known good snapshot.
+        let guardURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cmdbook-guard-\(UUID().uuidString).json")
+        var goodSummary = ScanSummary()
+        goodSummary.withUsage = 90
+        var good = Snapshot(tools: Array(repeating: echoTool, count: 100))
+        good.summary = goodSummary
+        var degradedSummary = ScanSummary()
+        degradedSummary.withUsage = 10
+        var degraded = Snapshot(tools: Array(repeating: echoTool, count: 10))
+        degraded.summary = degradedSummary
+        do {
+            let first = try Store.saveSnapshot(good, to: guardURL)
+            let second = try Store.saveSnapshot(degraded, to: guardURL)
+            let after = Store.loadSnapshot(from: guardURL)
+            check(first && !second && after?.summary.withUsage == 90,
+                  "退化扫描被拒绝覆盖 last-good 快照", &failures)
+        } catch {
+            check(false, "快照质量闸门: \(error)", &failures)
+        }
+        try? fileManager.removeItem(at: guardURL)
+        check(Store.debugSnapshotURL.lastPathComponent != AppPaths.snapshotURL.lastPathComponent,
+              "--limit 调试快照与生产快照路径隔离", &failures)
 
         let snapshot = Snapshot(
             version: 1,

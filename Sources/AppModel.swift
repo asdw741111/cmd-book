@@ -56,6 +56,7 @@ final class AppModel: ObservableObject {
     @Published var isRunning = false
     @Published var exitText = ""
     @Published var confirmRun = false
+    @Published var confirmPolicy: ExecutionPolicy = .inApp
 
     // Search results are cached. SwiftUI reads `matches.count`, `visibleMatches`
     // and `scopeExpanded` several times per body evaluation, so recomputing them
@@ -108,13 +109,22 @@ final class AppModel: ObservableObject {
 
     var confirmationMessage: String {
         guard let example = activeExample else { return "" }
+        let warning: String
+        switch confirmPolicy {
+        case .confirmWrite:
+            warning = "注意：此示例会写入或覆盖文件。请确认输出路径与工作目录无误。\n命令按参数数组直接执行，不经过 shell。"
+        case .inApp:
+            warning = "命令按参数数组直接执行，不经过 shell。"
+        case .terminalOnly:
+            warning = "此命令将在 Terminal 中运行。"
+        }
         return """
         \(pendingCommandText)
 
         风险等级：\(example.riskLabel)
         工作目录：\(workingDirectory)
 
-        命令按参数数组直接执行，不经过 shell；执行前请确认输出文件不会覆盖重要数据。
+        \(warning)
         """
     }
 
@@ -163,17 +173,23 @@ final class AppModel: ObservableObject {
                     self.statusText = "已扫描 \(done) / \(total) 个工具"
                 }
             }
+            var failure: String?
             do {
-                try Store.saveSnapshot(snapshot)
-            } catch {
-                DispatchQueue.main.async { [self] in
-                    self.notice = "快照写入失败：\(error.localizedDescription)"
+                if try Store.saveSnapshot(snapshot) == false {
+                    failure = "本次扫描结果明显差于上一份索引（工具数或用法文本数下降超过 10%），已保留原有数据，未覆盖快照。"
                 }
+            } catch {
+                failure = "快照写入失败：\(error.localizedDescription)"
             }
             DispatchQueue.main.async { [self] in
-                self.snapshot = snapshot
                 self.isScanning = false
-                self.statusText = "扫描完成 · \(snapshot.summary.discovered) 个工具 · \(snapshot.summary.withUsage) 个有用法 · \(Self.displayDate(snapshot.scannedAt))"
+                if let failure = failure {
+                    self.notice = failure
+                    self.statusText = "扫描未更新 · 已保留上一份索引"
+                } else {
+                    self.snapshot = snapshot
+                    self.statusText = "扫描完成 · \(snapshot.summary.discovered) 个工具 · \(snapshot.summary.withUsage) 个有用法 · \(Self.displayDate(snapshot.scannedAt))"
+                }
             }
         }
     }
@@ -187,15 +203,28 @@ final class AppModel: ObservableObject {
 
     func requestRun() {
         guard let example = activeExample, let tool = selectedTool else { return }
-        if example.isInteractive || tool.interactive {
-            openInTerminal(example: example, tool: tool)
+        let policy = Runner.policy(for: tool, example: example)
+        confirmPolicy = policy
+        guard policy == .terminalOnly else {
+            confirmRun = true
             return
         }
-        confirmRun = true
+        // Terminal hand-off must pass the same safety checks as in-app runs.
+        do {
+            try Runner.validateSafety(tool: tool)
+        } catch {
+            notice = error.localizedDescription
+            return
+        }
+        openInTerminal(example: example, tool: tool)
     }
 
     func performRun() {
         guard let example = activeExample, let tool = selectedTool else { return }
+        if Runner.policy(for: tool, example: example) == .terminalOnly {
+            notice = "此命令需要在 Terminal 中运行，不能在应用内执行。"
+            return
+        }
         do {
             try Runner.validate(tool: tool, example: example)
         } catch {
@@ -254,8 +283,12 @@ final class AppModel: ObservableObject {
             ?? ProcessInfo.processInfo.environment["PATH"]
             ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         do {
-            try TerminalBridge.open(argv: [tool.path] + argv, loginPath: loginPath)
-            notice = "已在 Terminal 中打开 \(tool.name)（交互式工具需要在真实终端运行）"
+            try TerminalBridge.open(
+                argv: [tool.path] + argv,
+                loginPath: loginPath,
+                workingDirectory: URL(fileURLWithPath: workingDirectory)
+            )
+            notice = "已在 Terminal 中打开 \(tool.name)（高风险或交互式命令需要在真实终端运行）"
         } catch {
             notice = "无法打开 Terminal：\(error.localizedDescription)"
         }

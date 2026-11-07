@@ -24,6 +24,7 @@ fi
 echo "Compiling ${#SOURCES[@]} Swift sources..."
 /usr/bin/swiftc \
     -swift-version 5 \
+    -O \
     -target arm64-apple-macosx13.0 \
     "${SOURCES[@]}" \
     -o "$MACOS/CmdBook"

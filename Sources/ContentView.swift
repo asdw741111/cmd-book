@@ -34,7 +34,9 @@ struct ContentView: View {
         .frame(minWidth: 1060, minHeight: 640)
         .alert("确认执行命令", isPresented: $model.confirmRun) {
             Button("取消", role: .cancel) { }
-            Button("执行", role: .destructive) { model.performRun() }
+            Button(model.confirmPolicy == .confirmWrite ? "确认写入" : "执行", role: .destructive) {
+                model.performRun()
+            }
         } message: {
             Text(model.confirmationMessage)
         }
