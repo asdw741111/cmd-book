@@ -288,12 +288,7 @@ git push origin main      # 首次可用 git push -u origin main
 
 ## 仓库维护
 
-历史遗留文件（旧 DevOps 监控面板的 `index.html` / `css/` / `js/` / `tests/`，
-以及已废弃的 `docs/design.md`、`docs/superpowers/plans/`）已于 2026-11-06 清理，
 仓库只保留 CmdBook 本体、现行设计文档与文章素材。
-
-这些文件仍可从 git 历史恢复（`git checkout <旧提交> -- <路径>`），另有一份独立备份：
-`~/Library/Application Support/CmdBook/legacy-backup-2026-11-06.tar.gz`。
 
 本地 `dist/`（构建产物，应用在其中运行）与 `.build/`（图标中间文件）属于可再生产物，
 已由 `.gitignore` 排除，不进仓库；需要时执行 `./build.sh` 与 `./make-icon.sh` 重建。
