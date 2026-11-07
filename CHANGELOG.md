@@ -7,11 +7,11 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### Features
 
-* **app:** wire routing and views ([3687005](https://github.com/asdw741111/cmd-book/commit/36870058ee88f17a4080dc8983f5617a2044dab9))
-* **charts:** add SVG chart builders ([f4246be](https://github.com/asdw741111/cmd-book/commit/f4246be4a872858f11c2aec04b9bb3e54725ee4a))
-* CmdBook macOS 原生命令行工具手册 ([c850b9c](https://github.com/asdw741111/cmd-book/commit/c850b9c7b6d5ce8afae36e5806657fe00adc61dd))
-* **data:** add sample data module ([696f3b8](https://github.com/asdw741111/cmd-book/commit/696f3b8b674a609d4a2a1111fdda1b4b653353dc))
-* **table:** add sortable table builders ([fb181b1](https://github.com/asdw741111/cmd-book/commit/fb181b1b1c64f1743d460e9ae07abeb8b2f14c13))
-* **theme:** add theme module with localStorage persistence ([e4e39a4](https://github.com/asdw741111/cmd-book/commit/e4e39a4133258b2a11fef0eeb71fe45ad47f0469))
-* **ui:** add shell and styles ([c026147](https://github.com/asdw741111/cmd-book/commit/c026147af6b9eb74ce275b6ac763aed0b40d7a75))
-* **ui:** dual-encode status pills and prevent cell wrapping ([985eb9f](https://github.com/asdw741111/cmd-book/commit/985eb9f673eb2212cde3dd0eb45d4b007ddf8700))
+* **app:** wire routing and views ([22bb250](https://github.com/asdw741111/cmd-book/commit/22bb2503fe88e56689b81c8b7bad62900b54cf5a))
+* **charts:** add SVG chart builders ([9063620](https://github.com/asdw741111/cmd-book/commit/9063620680cdd11591379eaf5b52ce07e1e74fc1))
+* CmdBook macOS 原生命令行工具手册 ([683d544](https://github.com/asdw741111/cmd-book/commit/683d54481f8cca89c83754492502d02064ef3f98))
+* **data:** add sample data module ([521516a](https://github.com/asdw741111/cmd-book/commit/521516a297032fb2dbb1cdf43f93dd31f45feb0e))
+* **table:** add sortable table builders ([8985add](https://github.com/asdw741111/cmd-book/commit/8985add3db90e48ef02a1c752879cd183b526e36))
+* **theme:** add theme module with localStorage persistence ([6d50eba](https://github.com/asdw741111/cmd-book/commit/6d50eba5c33873173f29b5e4b2eac67e4030b6eb))
+* **ui:** add shell and styles ([aeaaf4a](https://github.com/asdw741111/cmd-book/commit/aeaaf4af9d25d1d40e45b0a7feb69f4ecad40454))
+* **ui:** dual-encode status pills and prevent cell wrapping ([131b5ab](https://github.com/asdw741111/cmd-book/commit/131b5ab91967dc625bcc23a8d9837f4d911e5d6d))
