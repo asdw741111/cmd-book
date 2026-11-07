@@ -93,6 +93,9 @@ struct SidebarView: View {
                 Text("内置中文词条 \(model.exactChineseCount) 条 · 其余由规则与分类兜底")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                Text(model.userResourceStatus)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
                 if model.scopeExpanded {
                     Text("当前筛选无结果，已自动扩大到全部工具")
                         .font(.caption2)
@@ -103,12 +106,23 @@ struct SidebarView: View {
 
             Divider()
 
+            // A macOS List reuses its backing NSScrollView, so a shorter result
+            // set keeps the old offset and clips the first row. Reset the AppKit
+            // scroll position whenever the query, scope or result count changes.
             List(model.visibleMatches, selection: $model.selectedName) { tool in
                 ToolRow(tool: tool).tag(tool.name)
             }
             .listStyle(.inset)
+
+            // Zero-height helper, guaranteed to be in the window hierarchy.
+            ListScrollResetter(trigger: listScrollTrigger)
+                .frame(height: 0)
         }
         .frame(minWidth: 290)
+    }
+
+    private var listScrollTrigger: String {
+        "\(model.query)|\(model.filter.rawValue)|\(model.visibleMatches.count)"
     }
 }
 

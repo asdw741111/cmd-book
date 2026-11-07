@@ -134,6 +134,32 @@ enum Headless {
         return passed ? 0 : 1
     }
 
+    /// Prints the effective resource set so users can verify their overlays
+    /// without launching the GUI.
+    static func resources() {
+        let library = ExampleRepo.load()
+        let examplePatch = ExampleRepo.userPatch()
+        let dictionary = ChineseNotes.load()
+        let chinesePatch = ChineseNotes.userPatch()
+
+        print("=== 生效资源 ===")
+        print("示例总数       : \(library.examples.count)（覆盖 \(Set(library.examples.map { $0.tool }).count) 个工具）")
+        if let patch = examplePatch {
+            print("用户示例补丁   : 新增/覆盖 \(patch.examples?.count ?? 0) 条，禁用 \(patch.remove?.count ?? 0) 条")
+        } else {
+            print("用户示例补丁   : 未启用")
+        }
+        print("中文精确词条   : \(dictionary.tools.count)")
+        print("中文规则       : \(dictionary.rules.count)（按最长前缀优先）")
+        if let patch = chinesePatch {
+            print("用户词典补丁   : 词条 \(patch.tools?.count ?? 0) 条，规则 \(patch.rules?.count ?? 0) 条，兜底 \(patch.fallback?.count ?? 0) 条")
+        } else {
+            print("用户词典补丁   : 未启用")
+        }
+        print("用户资源目录   : \(AppPaths.supportDirectory.path)")
+        print("增量文件       : examples.json / tool-zh.json（与 bundle 同名，按字段合并）")
+    }
+
     /// Query the real snapshot from the command line, using the same dictionary
     /// and ranking as the GUI. Returns 1 when nothing matched.
     static func search(query: String) -> Int32 {
@@ -463,6 +489,93 @@ enum Headless {
         try? fileManager.removeItem(at: guardURL)
         check(Store.debugSnapshotURL.lastPathComponent != AppPaths.snapshotURL.lastPathComponent,
               "--limit 调试快照与生产快照路径隔离", &failures)
+
+        // User resource overlays (pure merge, no filesystem writes).
+        let baseExample = Example(
+            id: "base", tool: "echo", title: "内置", summary: nil,
+            argv: ["base"], fields: [], risk: "safe", interactive: nil
+        )
+        let overrideExample = Example(
+            id: "base", tool: "echo", title: "用户覆盖", summary: nil,
+            argv: ["user"], fields: [], risk: "safe", interactive: nil
+        )
+        let extraExample = Example(
+            id: "extra", tool: "jq", title: "新增", summary: nil,
+            argv: ["."], fields: [], risk: "safe", interactive: nil
+        )
+        let baseLibrary = ExampleLibrary(version: 1, examples: [baseExample])
+        let mergedLibrary = ExampleRepo.merging(
+            base: baseLibrary,
+            patch: UserExamplePatch(examples: [overrideExample, extraExample], remove: nil)
+        )
+        check(mergedLibrary.examples.count == 2
+              && mergedLibrary.examples.first { $0.id == "base" }?.title == "用户覆盖",
+              "用户示例按 id 覆盖内置条目", &failures)
+        check(mergedLibrary.examples.contains { $0.id == "extra" },
+              "用户示例可追加新工具", &failures)
+        let removedLibrary = ExampleRepo.merging(
+            base: mergedLibrary,
+            patch: UserExamplePatch(examples: nil, remove: ["base"])
+        )
+        check(removedLibrary.examples.count == 1
+              && removedLibrary.examples.first?.id == "extra",
+              "remove 可禁用内置示例", &failures)
+        check(ExampleRepo.merging(base: baseLibrary, patch: nil).examples.count == 1,
+              "无用户补丁时保留内置库", &failures)
+        check(ExampleRepo.examples(for: "jq", in: mergedLibrary).count == 1,
+              "用户新增示例可被工具检索到", &failures)
+
+        let baseEntry = ChineseEntry(
+            title: "内置词条", summary: "内置", category: "内置分类", keywords: ["内置"]
+        )
+        let userEntry = ChineseEntry(
+            title: "用户词条", summary: "用户", category: "用户分类",
+            keywords: ["用户关键词"]
+        )
+        let baseDict = ChineseDictionary(
+            version: 1, tools: ["mytool": baseEntry],
+            rules: [ChineseRule(prefix: "my", category: "内置分类",
+                                keywords: ["内置"], summary: "内置规则")],
+            fallback: [:]
+        )
+        let mergedDict = ChineseNotes.merging(
+            base: baseDict,
+            patch: UserChinesePatch(
+                tools: ["mytool": userEntry],
+                rules: [ChineseRule(prefix: "mytool", category: "用户分类",
+                                    keywords: ["用户关键词"], summary: "用户规则")],
+                fallback: nil
+            )
+        )
+        check(mergedDict.tools["mytool"]?.title == "用户词条",
+              "用户中文词条覆盖内置", &failures)
+        var mergeTool = Tool(
+            name: "mytool", path: "/usr/bin/mytool", allPaths: [],
+            category: .user, description: "", usage: "", usageSource: "none",
+            manExamples: "", interactive: false
+        )
+        ChineseNotes.apply(&mergeTool, dictionary: mergedDict)
+        check(mergeTool.titleZh == "用户词条",
+              "合并后词典参与中文说明生成", &failures)
+        var ruleTool = Tool(
+            name: "mytool-extra", path: "/usr/bin/mytool-extra", allPaths: [],
+            category: .user, description: "", usage: "", usageSource: "none",
+            manExamples: "", interactive: false
+        )
+        ChineseNotes.apply(&ruleTool, dictionary: mergedDict)
+        check(ruleTool.categoryZh == "用户分类",
+              "用户规则按最长前缀优先生效", &failures)
+        check(!AppPaths.userResourceURL(name: "examples", extension: "json")
+                .path.contains(".app/Contents/Resources"),
+              "用户资源目录位于签名包之外", &failures)
+
+        let reloadModel = AppModel()
+        reloadModel.load()
+        let beforeReload = reloadModel.tools.count
+        reloadModel.reloadResources()
+        check(reloadModel.tools.count == beforeReload
+              && !reloadModel.library.examples.isEmpty,
+              "热重载资源不丢失索引与示例", &failures)
 
         let snapshot = Snapshot(
             version: 1,

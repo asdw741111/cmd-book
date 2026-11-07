@@ -20,6 +20,12 @@ enum AppPaths {
     /// Works both when launched as a real .app bundle and when the raw binary is
     /// invoked for --scan / --verify, without placing non-Mach-O files in
     /// Contents/MacOS (which would break ad-hoc signing).
+    /// Location of a user-authored resource overlay. These files are outside
+    /// the signed .app bundle, so editing them never invalidates code signing.
+    static func userResourceURL(name: String, extension ext: String) -> URL {
+        supportDirectory.appendingPathComponent("\(name).\(ext)")
+    }
+
     static func resourceURL(name: String, extension ext: String) -> URL? {
         let fileManager = FileManager.default
         var candidates: [URL] = []

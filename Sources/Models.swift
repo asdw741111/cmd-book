@@ -110,6 +110,21 @@ struct ExampleLibrary: Codable {
     var examples: [Example]
 }
 
+/// Optional user overlay for the bundled example library. Lives at
+/// ~/Library/Application Support/CmdBook/examples.json; every field can be
+/// omitted, so a user file only has to describe the delta.
+struct UserExamplePatch: Codable {
+    var examples: [Example]?
+    var remove: [String]?
+}
+
+/// Optional user overlay for the Chinese dictionary.
+struct UserChinesePatch: Codable {
+    var tools: [String: ChineseEntry]?
+    var rules: [ChineseRule]?
+    var fallback: [String: ChineseEntry]?
+}
+
 struct SavedExample: Codable, Identifiable {
     var id: String
     var exampleID: String

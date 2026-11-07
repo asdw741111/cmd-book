@@ -4,6 +4,11 @@ import Darwin
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 
+if arguments.contains("--resources") {
+    Headless.resources()
+    exit(0)
+}
+
 if arguments.contains("--bench") {
     exit(Headless.bench())
 }

@@ -129,11 +129,10 @@ final class AppModel: ObservableObject {
     }
 
     func load() {
-        library = ExampleRepo.load()
-        chineseDictionary = ChineseNotes.load()
+        loadResources()
         savedStore = Store.loadSaved()
 
-        // Re-apply Chinese notes at load time so editing Resources/tool-zh.json
+        // Re-apply Chinese notes at load time so editing the user dictionary
         // takes effect on next launch without requiring a full rescan.
         if var loaded = Store.loadSnapshot() {
             loaded.tools = loaded.tools.map { tool in
@@ -159,6 +158,50 @@ final class AppModel: ObservableObject {
                 ?? tools.first { $0.category == .user }?.name
                 ?? tools.first?.name
         }
+    }
+
+    private func loadResources() {
+        library = ExampleRepo.load()
+        chineseDictionary = ChineseNotes.load()
+    }
+
+    var userResourceStatus: String {
+        let fileManager = FileManager.default
+        let hasExamples = fileManager.fileExists(
+            atPath: AppPaths.userResourceURL(name: "examples", extension: "json").path
+        )
+        let hasDictionary = fileManager.fileExists(
+            atPath: AppPaths.userResourceURL(name: "tool-zh", extension: "json").path
+        )
+        switch (hasExamples, hasDictionary) {
+        case (true, true): return "用户资源：自定义示例 + 中文词典已生效"
+        case (true, false): return "用户资源：自定义示例已生效"
+        case (false, true): return "用户资源：中文词典已生效"
+        case (false, false): return "用户资源：未启用（工具菜单可打开目录）"
+        }
+    }
+
+    /// Re-reads bundle + user overlays and re-applies Chinese metadata without
+    /// rescanning or restarting. `snapshot.didSet` rebuilds the search index.
+    func reloadResources() {
+        loadResources()
+        if var current = snapshot {
+            current.tools = current.tools.map { tool in
+                var updated = tool
+                ChineseNotes.apply(&updated, dictionary: chineseDictionary)
+                return updated
+            }
+            snapshot = current
+        } else {
+            rebuildIndex()
+            recomputeResults()
+        }
+        notice = "资源已重新载入 · \(library.examples.count) 条示例 · \(chineseDictionary.tools.count) 条中文词条"
+    }
+
+    func openUserResourcesDirectory() {
+        AppPaths.prepare()
+        NSWorkspace.shared.open(AppPaths.supportDirectory)
     }
 
     func rescan() {

@@ -64,9 +64,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rescan.target = self
         toolsMenu.addItem(rescan)
 
+        toolsMenu.addItem(NSMenuItem.separator())
+
+        let reload = NSMenuItem(
+            title: "重新载入资源", action: #selector(reloadResources), keyEquivalent: "r"
+        )
+        reload.keyEquivalentModifierMask = [.command, .option]
+        reload.target = self
+        toolsMenu.addItem(reload)
+
+        let openDirectory = NSMenuItem(
+            title: "打开用户资源目录", action: #selector(openUserResourcesDirectory),
+            keyEquivalent: ""
+        )
+        openDirectory.target = self
+        toolsMenu.addItem(openDirectory)
+
         NSApp.mainMenu = mainMenu
     }
 
     @objc private func focusSearch() { model.focusSearch() }
     @objc private func rescanTools() { model.rescan() }
+    @objc private func reloadResources() { model.reloadResources() }
+    @objc private func openUserResourcesDirectory() { model.openUserResourcesDirectory() }
 }

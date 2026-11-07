@@ -36,16 +36,54 @@ struct ToolNotes {
 /// sure even obscure system binaries have readable Chinese text and searchable
 /// Chinese keywords.
 enum ChineseNotes {
-    static func load() -> ChineseDictionary {
-        guard let url = AppPaths.resourceURL(name: "tool-zh", extension: "json"),
-              let data = try? Data(contentsOf: url),
-              var dictionary = try? JSONDecoder().decode(ChineseDictionary.self, from: data) else {
-            return .empty
+    static func userPatch() -> UserChinesePatch? {
+        let url = AppPaths.userResourceURL(name: "tool-zh", extension: "json")
+        guard let data = try? Data(contentsOf: url),
+              let patch = try? JSONDecoder().decode(UserChinesePatch.self, from: data) else {
+            return nil
         }
-        // `notes(for:)` returns on the first matching prefix. Sort longest-first
-        // so a specific rule (`gif2webp`) is not shadowed by a generic one (`gif`).
-        dictionary.rules.sort { $0.prefix.count > $1.prefix.count }
-        return dictionary
+        return patch
+    }
+
+    /// Stable longest-prefix-first ordering. Keeping the original index as the
+    /// tie-breaker also guarantees user rules (prepended below) win over bundled
+    /// rules of the same length.
+    static func ordering(_ dictionary: ChineseDictionary) -> ChineseDictionary {
+        var result = dictionary
+        result.rules = result.rules.enumerated().sorted { left, right in
+            if left.element.prefix.count != right.element.prefix.count {
+                return left.element.prefix.count > right.element.prefix.count
+            }
+            return left.offset < right.offset
+        }.map { $0.element }
+        return result
+    }
+
+    /// Pure merge: user exact entries override by name, user rules are tried
+    /// before bundled rules, user fallbacks override by category.
+    static func merging(
+        base: ChineseDictionary, patch: UserChinesePatch?
+    ) -> ChineseDictionary {
+        guard let patch = patch else { return ordering(base) }
+        var merged = base
+        for (name, entry) in patch.tools ?? [:] { merged.tools[name] = entry }
+        for (category, entry) in patch.fallback ?? [:] { merged.fallback[category] = entry }
+        if let rules = patch.rules, !rules.isEmpty {
+            merged.rules = rules + base.rules
+        }
+        return ordering(merged)
+    }
+
+    static func load() -> ChineseDictionary {
+        let base: ChineseDictionary
+        if let url = AppPaths.resourceURL(name: "tool-zh", extension: "json"),
+           let data = try? Data(contentsOf: url),
+           let dictionary = try? JSONDecoder().decode(ChineseDictionary.self, from: data) {
+            base = dictionary
+        } else {
+            base = .empty
+        }
+        return merging(base: base, patch: userPatch())
     }
 
     static func notes(for tool: Tool, dictionary: ChineseDictionary) -> ToolNotes {

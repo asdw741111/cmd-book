@@ -100,17 +100,89 @@ open dist/CmdBook.app       # 启动
 中文说明 > 路径 > 英文描述 > 用法文本。因此中文查询会稳定排在最前。
 详情页的中文关键词标签可点击，直接作为搜索词。
 
+## 用户资源与自定义示例
+
+内置词典与示例是**基线**，用户可以在应用数据目录放同名增量文件来扩展，
+无需重新编译、无需重新打包、也不会破坏 `.app` 的签名封印：
+
+```
+~/Library/Application Support/CmdBook/
+  examples.json      用户自定义示例（可选）
+  tool-zh.json       用户中文词条/规则（可选）
+  tools.json         扫描快照（应用生成）
+  saved.json         保存的参数组合（应用生成）
+```
+
+合并规则是**按字段增量合并，不是整体替换**：
+
+- `examples.json`：`examples` 按 `id` 覆盖或新增；`remove` 按 `id` 禁用内置示例。
+- `tool-zh.json`：`tools` 按工具名覆盖；`rules` 追加并优先于内置规则；
+  `fallback` 按分类覆盖。规则最终按前缀长度降序匹配，同长度用户规则优先。
+- 应用升级带来的新内置词条与示例仍然生效，用户只需维护自己的增量。
+
+`examples.json` 示例（所有字段都可省略，只写增量）：
+
+```json
+{
+  "examples": [
+    {
+      "id": "my-jq-keys",
+      "tool": "jq",
+      "title": "列出 JSON 顶层字段",
+      "summary": "快速查看一个 JSON 文件有哪些键。",
+      "argv": ["-r", "keys[]", "{{file}}"],
+      "fields": [
+        { "key": "file", "label": "JSON 文件", "value": "data.json" }
+      ],
+      "risk": "safe"
+    }
+  ],
+  "remove": ["git-diff-stat"]
+}
+```
+
+`tool-zh.json` 示例：
+
+```json
+{
+  "tools": {
+    "mytool": {
+      "title": "我的工具",
+      "summary": "团队内部使用的命令行程序。",
+      "category": "内部工具",
+      "keywords": ["内部工具", "数据同步"]
+    }
+  },
+  "rules": [
+    { "prefix": "myteam-", "category": "内部工具", "keywords": ["内部工具"], "summary": "团队自研命令。" }
+  ]
+}
+```
+
+生效方式：
+
+- 菜单「工具 → 重新载入资源」或 **⌘⌥R**，即时重新读取并重建索引，无需重启或重扫；
+- 菜单「工具 → 打开用户资源目录」直接打开该目录；
+- 终端执行 `$BIN --resources` 查看当前生效的示例数、词条数、规则数与用户补丁状态；
+- 侧栏底部会显示用户资源是否已生效。
+
+**安全提示**：用户自定义示例与内置示例走同一套白名单执行、危险名单校验与
+`risk` 策略，但 `argv` 内容由文件作者负责。请只放自己编写或可信来源的示例；
+`danger` 类示例一律转交 Terminal，不会在应用内执行。编辑 bundle 内
+`Resources/*.json` 仍需重新执行 `./build.sh`，详见前文说明。
+
 ## 工程结构
 
 ```
 Sources/
-  main.swift            入口；--scan / --verify / --runprobe / --search / --bench
+  main.swift            入口；--scan / --verify / --runprobe / --search / --bench / --resources
   AppDelegate.swift     NSApplication 生命周期、主菜单与快捷键
   AppModel.swift        状态、中文词典套用、搜索结果缓存、扫描调度、执行编排
   ContentView.swift     SwiftUI 三栏界面（列表 / 详情 / 运行控制台）
   Models.swift          数据模型（含向后兼容的解码器）
   Paths.swift           应用目录、资源定位、来源分类、交互/危险工具名单
-  ChineseNotes.swift    中文词典载入与三层说明生成
+  ChineseNotes.swift    中文词典载入、用户增量合并、三层说明生成
+  ExampleRepo.swift     示例库载入、用户增量合并
   SearchIndex.swift     启动时预建的小写 UTF-8 字节索引
   Search.swift          基于索引的纯函数中文优先排序
   ProcessSupport.swift  子进程封装（临时文件捕获 + 硬超时 + 独立 CWD）、登录 PATH 解析
@@ -149,8 +221,9 @@ docs/
 无界面命令（`BIN=dist/CmdBook.app/Contents/MacOS/CmdBook`）：
 
 ```sh
-$BIN --verify                # 38 项自检，含中文搜索、工作目录隔离、快照保护与执行策略
+$BIN --verify                # 48 项自检，含中文搜索、快照保护、执行策略与用户资源合并
 $BIN --runprobe              # 流式执行器端到端验证
+$BIN --resources             # 查看当前生效的示例/词条/规则与用户补丁状态
 $BIN --scan                  # 全量扫描并写入快照
 $BIN --scan --limit 50       # 限量调试扫描，写入 tools-debug.json，绝不覆盖生产索引
 $BIN --search 数据恢复       # 对真实快照做中文检索（输出前 10 条）
@@ -161,7 +234,7 @@ $BIN --bench                # 交互性能回归测试（帧预算 16.7 ms）
 `--verify` 覆盖：示例库载入、占位符展开、危险/交互工具拦截、进程执行与输出捕获、
 探测子进程不污染工作区、man 重字符清理、`EXAMPLES` 段提取、PATH 去重、
 中文词典与「数据恢复 → photorec」搜索命中、最长前缀规则、`risk` 执行策略、
-Terminal 脚本的工作目录与自删除、退化快照拒绝覆盖、快照编解码。
+Terminal 脚本的工作目录与自删除、退化快照拒绝覆盖、用户资源增量合并与热重载、快照编解码。
 
 **快照保护**：限量扫描写入独立的 `tools-debug.json`；全量扫描若工具数或用法文本数
 比上一份下降超过 10%（例如触发 180 秒全局超时），会拒绝写入并保留 last-good 索引，
