@@ -134,6 +134,25 @@ enum Headless {
         return passed ? 0 : 1
     }
 
+    /// Lists the tools in the "已收藏" scope, mirroring the GUI filter.
+    static func favorites() -> Int32 {
+        guard let snapshot = Store.loadSnapshot() else {
+            print("没有快照，请先执行 --scan")
+            return 1
+        }
+        let stored = Store.loadFavorites()
+        let outcome = SearchIndex(tools: snapshot.tools).results(
+            query: "", filter: .favorites, limit: Int.max,
+            favorites: Set(stored.tools)
+        )
+        print("已收藏 \(outcome.matches.count) 个工具：")
+        for tool in outcome.matches {
+            let title = tool.titleZh.isEmpty ? "" : " — \(tool.titleZh)"
+            print("  \(tool.name)\(title)")
+        }
+        return 0
+    }
+
     /// Prints the effective resource set so users can verify their overlays
     /// without launching the GUI.
     static func resources() {
@@ -141,8 +160,12 @@ enum Headless {
         let examplePatch = ExampleRepo.userPatch()
         let dictionary = ChineseNotes.load()
         let chinesePatch = ChineseNotes.userPatch()
+        let favorites = Store.loadFavorites()
+        let history = Store.loadHistory()
 
         print("=== 生效资源 ===")
+        print("已收藏工具     : \(favorites.tools.count) 个\(favorites.tools.isEmpty ? "" : "（" + favorites.tools.joined(separator: "、") + "）")")
+        print("运行历史       : \(history.items.count) 条（上限 \(Store.historyLimit)）")
         print("示例总数       : \(library.examples.count)（覆盖 \(Set(library.examples.map { $0.tool }).count) 个工具）")
         if let patch = examplePatch {
             print("用户示例补丁   : 新增/覆盖 \(patch.examples?.count ?? 0) 条，禁用 \(patch.remove?.count ?? 0) 条")
@@ -576,6 +599,82 @@ enum Headless {
         check(reloadModel.tools.count == beforeReload
               && !reloadModel.library.examples.isEmpty,
               "热重载资源不丢失索引与示例", &failures)
+
+        // Favourites, run history and user-authored examples.
+        var fav = FavoriteStore()
+        fav.toggle(tool: "ffmpeg")
+        fav.toggle(tool: "jq")
+        check(fav.tools.count == 2 && fav.contains(tool: "ffmpeg"),
+              "收藏新增与查询", &failures)
+        fav.toggle(tool: "ffmpeg")
+        check(fav.tools.count == 1 && !fav.contains(tool: "ffmpeg"),
+              "收藏可取消", &failures)
+
+        let tempRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+        let favURL = tempRoot.appendingPathComponent("cmdbook-fav-\(UUID().uuidString).json")
+        let histURL = tempRoot.appendingPathComponent("cmdbook-hist-\(UUID().uuidString).json")
+        let patchURL = tempRoot.appendingPathComponent("cmdbook-patch-\(UUID().uuidString).json")
+        var hist = RunHistory()
+        for index in 0..<(Store.historyLimit + 5) {
+            hist.items.append(RunRecord(
+                id: "\(index)", tool: "echo", title: "验证", command: "echo ok",
+                workingDirectory: "/tmp", startedAt: "2026-11-07T00:00:00Z",
+                durationMs: 1, exitCode: 0, viaTerminal: false, outputBytes: 7
+            ))
+        }
+        do {
+            try Store.saveFavorites(fav, to: favURL)
+            try Store.saveHistory(hist, to: histURL)
+            let loadedFav = Store.loadFavorites(from: favURL)
+            let loadedHist = Store.loadHistory(from: histURL)
+            check(loadedFav.tools == ["jq"],
+                  "收藏持久化往返", &failures)
+            check(loadedHist.items.count == Store.historyLimit,
+                  "运行历史裁剪至 \(Store.historyLimit) 条", &failures)
+        } catch {
+            check(false, "收藏/历史持久化: \(error)", &failures)
+        }
+
+        let fields = ExampleRepo.extractFields(
+            ["-i", "{{input}}", "{{output}}", "{{input}}"]
+        )
+        check(fields.map(\.key) == ["input", "output"],
+              "从 argv 自动提取字段并去重", &failures)
+
+        let writtenPatch = UserExamplePatch(examples: [extraExample], remove: ["base"])
+        do {
+            try ExampleRepo.saveUserPatch(writtenPatch, to: patchURL)
+            let data = try Data(contentsOf: patchURL)
+            let decoded = try JSONDecoder().decode(UserExamplePatch.self, from: data)
+            check(decoded.examples?.count == 1 && decoded.remove == ["base"],
+                  "用户示例补丁写回与读回", &failures)
+        } catch {
+            check(false, "用户示例补丁写回: \(error)", &failures)
+        }
+
+        let favIndex = SearchIndex(tools: [echoTool, ffmpegTool])
+        let favOutcome = favIndex.results(
+            query: "", filter: .all, limit: 50, favorites: ["ffmpeg"]
+        )
+        check(favOutcome.matches.count == 1
+              && favOutcome.matches.first?.name == "ffmpeg",
+              "只看收藏时结果被正确过滤", &failures)
+        let emptyFavOutcome = favIndex.results(
+            query: "ffmpeg", filter: .all, limit: 50, favorites: []
+        )
+        check(emptyFavOutcome.matches.isEmpty && !emptyFavOutcome.scopeExpanded,
+              "收藏为空时不扩大到全部工具", &failures)
+        let favoritesScope = favIndex.results(
+            query: "", filter: .favorites, limit: 50, favorites: ["ffmpeg"]
+        )
+        check(favoritesScope.matches.count == 1
+              && favoritesScope.matches.first?.name == "ffmpeg"
+              && ToolFilter.favorites.label == "已收藏",
+              "已收藏范围只列出收藏工具", &failures)
+
+        for url in [favURL, histURL, patchURL] {
+            try? fileManager.removeItem(at: url)
+        }
 
         let snapshot = Snapshot(
             version: 1,

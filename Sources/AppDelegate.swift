@@ -64,6 +64,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rescan.target = self
         toolsMenu.addItem(rescan)
 
+        let newExampleItem = NSMenuItem(
+            title: "新建示例", action: #selector(createExample), keyEquivalent: "n"
+        )
+        newExampleItem.keyEquivalentModifierMask = [.command]
+        newExampleItem.target = self
+        toolsMenu.addItem(newExampleItem)
+
         toolsMenu.addItem(NSMenuItem.separator())
 
         let reload = NSMenuItem(
@@ -80,6 +87,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openDirectory.target = self
         toolsMenu.addItem(openDirectory)
 
+        let clearHistory = NSMenuItem(
+            title: "清空运行历史", action: #selector(clearRunHistory), keyEquivalent: ""
+        )
+        clearHistory.target = self
+        toolsMenu.addItem(clearHistory)
+
         NSApp.mainMenu = mainMenu
     }
 
@@ -87,4 +100,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func rescanTools() { model.rescan() }
     @objc private func reloadResources() { model.reloadResources() }
     @objc private func openUserResourcesDirectory() { model.openUserResourcesDirectory() }
+    @objc private func createExample() { model.showingExampleEditor = true }
+    @objc private func clearRunHistory() { model.clearHistory() }
 }

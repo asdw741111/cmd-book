@@ -125,6 +125,42 @@ struct UserChinesePatch: Codable {
     var fallback: [String: ChineseEntry]?
 }
 
+struct FavoriteStore: Codable {
+    var version: Int = 1
+    var tools: [String] = []
+    var examples: [String] = []
+}
+
+struct RunRecord: Codable, Identifiable, Hashable {
+    var id: String
+    var tool: String
+    var title: String
+    var command: String
+    var workingDirectory: String
+    var startedAt: String
+    var durationMs: Int
+    var exitCode: Int32?
+    var viaTerminal: Bool
+    var outputBytes: Int
+}
+
+struct RunHistory: Codable {
+    var version: Int = 1
+    var items: [RunRecord] = []
+}
+
+extension FavoriteStore {
+    func contains(tool name: String) -> Bool { tools.contains(name) }
+
+    mutating func toggle(tool name: String) {
+        if let index = tools.firstIndex(of: name) {
+            tools.remove(at: index)
+        } else {
+            tools.append(name)
+        }
+    }
+}
+
 struct SavedExample: Codable, Identifiable {
     var id: String
     var exampleID: String

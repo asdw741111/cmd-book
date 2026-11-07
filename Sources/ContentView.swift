@@ -40,6 +40,10 @@ struct ContentView: View {
         } message: {
             Text(model.confirmationMessage)
         }
+        .sheet(isPresented: $model.showingExampleEditor) {
+            ExampleEditorView(defaultTool: model.selectedName ?? "")
+                .environmentObject(model)
+        }
     }
 }
 
@@ -76,13 +80,16 @@ struct SidebarView: View {
 
                 Picker("范围", selection: $model.filter) {
                     Text("用户安装").tag(ToolFilter.user)
+                    Text("已收藏 ★").tag(ToolFilter.favorites)
                     Text("全部").tag(ToolFilter.all)
                     Text("系统自带").tag(ToolFilter.system)
                 }
                 .pickerStyle(.segmented)
 
                 HStack {
-                    Text("\(model.matches.count) 个结果")
+                    Text(model.filter == .favorites
+                         ? "已收藏 \(model.matches.count) 个工具"
+                         : "\(model.matches.count) 个结果")
                     Spacer()
                     if model.matches.count > model.visibleMatches.count {
                         Text("仅显示前 \(model.visibleMatches.count) 个")
@@ -113,6 +120,17 @@ struct SidebarView: View {
                 ToolRow(tool: tool).tag(tool.name)
             }
             .listStyle(.inset)
+            .overlay {
+                if model.filter == .favorites && model.visibleMatches.isEmpty {
+                    VStack(spacing: 6) {
+                        Image(systemName: "star").font(.title2)
+                        Text("还没有收藏的工具")
+                        Text("点击工具行右侧的星标即可加入这里。")
+                            .font(.caption)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+            }
 
             // Zero-height helper, guaranteed to be in the window hierarchy.
             ListScrollResetter(trigger: listScrollTrigger)
@@ -122,11 +140,12 @@ struct SidebarView: View {
     }
 
     private var listScrollTrigger: String {
-        "\(model.query)|\(model.filter.rawValue)|\(model.visibleMatches.count)"
+        "\(model.query)|\(model.filter.rawValue)|\(model.favorites.tools.count)|\(model.visibleMatches.count)"
     }
 }
 
 struct ToolRow: View {
+    @EnvironmentObject var model: AppModel
     let tool: Tool
 
     var body: some View {
@@ -141,6 +160,15 @@ struct ToolRow: View {
                         .lineLimit(1)
                 }
                 SourceBadge(text: tool.usageSource)
+                Spacer(minLength: 4)
+                Button {
+                    model.toggleFavorite(tool: tool.name)
+                } label: {
+                    Image(systemName: model.isFavorite(tool.name) ? "star.fill" : "star")
+                        .foregroundStyle(model.isFavorite(tool.name) ? .yellow : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(model.isFavorite(tool.name) ? "取消收藏" : "收藏此工具")
             }
             Text(tool.path)
                 .font(.caption)
@@ -301,7 +329,12 @@ struct ToolDetail: View {
 
                 Divider()
 
-                sectionHeader("常用示例", count: model.examplesForSelectedTool.count)
+                HStack {
+                    sectionHeader("常用示例", count: model.examplesForSelectedTool.count)
+                    Spacer()
+                    Button("+ 新建示例") { model.showingExampleEditor = true }
+                        .buttonStyle(.borderless)
+                }
                 if model.examplesForSelectedTool.isEmpty {
                     Text("该工具暂无内置示例，可使用下方用法文本或 man 补充示例。")
                         .font(.caption)
@@ -390,6 +423,10 @@ struct ExampleCard: View {
                 Button("填入参数") { model.selectExample(example) }
                 Button("复制命令") {
                     AppModel.copy(ExampleRepo.commandPreview(example, values: [:]))
+                }
+                if model.isUserExample(example) {
+                    Button("删除") { model.deleteCustomExample(example) }
+                        .foregroundStyle(.red)
                 }
             }
         }
@@ -504,8 +541,56 @@ struct ConsoleView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
             }
+
+            if !model.history.items.isEmpty {
+                Divider()
+                HStack {
+                    Text("最近运行").font(.subheadline)
+                    Text("\(model.history.items.count) 条").font(.caption2).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("清空") { model.clearHistory() }
+                        .buttonStyle(.borderless)
+                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(model.history.items.prefix(8))) { record in
+                            HStack(alignment: .top, spacing: 6) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("\(record.tool) · \(record.title)")
+                                        .font(.caption)
+                                        .lineLimit(1)
+                                    Text(record.command)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                Spacer(minLength: 4)
+                                Text(historyStatus(record))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { AppModel.copy(record.command) }
+                            .help("点击复制命令：\(record.command)")
+                        }
+                    }
+                    .padding(6)
+                }
+                .frame(height: 130)
+                .background(Color.secondary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
         }
         .padding(14)
         .frame(minWidth: 350, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func historyStatus(_ record: RunRecord) -> String {
+        if record.viaTerminal { return "Terminal" }
+        if let code = record.exitCode {
+            return "退出 \(code) · \(record.durationMs) ms"
+        }
+        return "已终止 · \(record.durationMs) ms"
     }
 }

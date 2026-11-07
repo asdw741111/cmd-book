@@ -50,12 +50,23 @@ final class SearchIndex {
         systemEntries = entries.filter { $0.tool.category != .user }
     }
 
-    func results(query: String, filter: ToolFilter, limit: Int) -> SearchOutcome {
-        let scoped: [SearchEntry]
+    /// - Parameter favorites: when non-nil, restrict results to these tool
+    ///   names and disable scope widening (staying inside the favourites set).
+    func results(
+        query: String, filter: ToolFilter, limit: Int,
+        favorites: Set<String>? = nil
+    ) -> SearchOutcome {
+        let base: [SearchEntry]
         switch filter {
-        case .user: scoped = userEntries
-        case .system: scoped = systemEntries
-        case .all: scoped = allEntries
+        case .user: base = userEntries
+        case .system: base = systemEntries
+        case .all, .favorites: base = allEntries
+        }
+        let scoped: [SearchEntry]
+        if let favorites = favorites {
+            scoped = base.filter { favorites.contains($0.tool.name) }
+        } else {
+            scoped = base
         }
 
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -70,7 +81,7 @@ final class SearchIndex {
 
         let needle = Data(normalized.utf8)
         var ranked = rankAll(scoped, needle: needle)
-        if ranked.isEmpty {
+        if ranked.isEmpty && favorites == nil {
             let widened = rankAll(allEntries, needle: needle)
             if !widened.isEmpty {
                 ranked = widened

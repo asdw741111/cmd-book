@@ -62,4 +62,59 @@ enum Store {
         let data = try encoder.encode(store)
         try data.write(to: AppPaths.savedURL, options: [.atomic])
     }
+
+    static var favoritesURL: URL {
+        AppPaths.supportDirectory.appendingPathComponent("favorites.json")
+    }
+
+    static var historyURL: URL {
+        AppPaths.supportDirectory.appendingPathComponent("history.json")
+    }
+
+    /// Most recent first; older entries beyond the cap are dropped.
+    static let historyLimit = 200
+
+    static func loadFavorites(from url: URL = Self.favoritesURL) -> FavoriteStore {
+        AppPaths.prepare()
+        guard let data = try? Data(contentsOf: url),
+              let store = try? JSONDecoder().decode(FavoriteStore.self, from: data) else {
+            return FavoriteStore()
+        }
+        return store
+    }
+
+    static func saveFavorites(
+        _ store: FavoriteStore, to url: URL = Self.favoritesURL
+    ) throws {
+        AppPaths.prepare()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(store).write(to: url, options: [.atomic])
+    }
+
+    static func loadHistory(from url: URL = Self.historyURL) -> RunHistory {
+        AppPaths.prepare()
+        guard let data = try? Data(contentsOf: url),
+              let history = try? JSONDecoder().decode(RunHistory.self, from: data) else {
+            return RunHistory()
+        }
+        var trimmed = history
+        if trimmed.items.count > historyLimit {
+            trimmed.items = Array(trimmed.items.prefix(historyLimit))
+        }
+        return trimmed
+    }
+
+    static func saveHistory(
+        _ history: RunHistory, to url: URL = Self.historyURL
+    ) throws {
+        AppPaths.prepare()
+        var trimmed = history
+        if trimmed.items.count > historyLimit {
+            trimmed.items = Array(trimmed.items.prefix(historyLimit))
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(trimmed).write(to: url, options: [.atomic])
+    }
 }

@@ -4,6 +4,7 @@ import AppKit
 
 enum ToolFilter: String, CaseIterable, Identifiable {
     case user
+    case favorites
     case all
     case system
 
@@ -12,6 +13,7 @@ enum ToolFilter: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .user: return "用户安装"
+        case .favorites: return "已收藏"
         case .all: return "全部"
         case .system: return "系统自带"
         }
@@ -57,6 +59,9 @@ final class AppModel: ObservableObject {
     @Published var exitText = ""
     @Published var confirmRun = false
     @Published var confirmPolicy: ExecutionPolicy = .inApp
+    @Published var favorites = FavoriteStore()
+    @Published var history = RunHistory()
+    @Published var showingExampleEditor = false
 
     // Search results are cached. SwiftUI reads `matches.count`, `visibleMatches`
     // and `scopeExpanded` several times per body evaluation, so recomputing them
@@ -88,7 +93,10 @@ final class AppModel: ObservableObject {
             scopeExpanded = false
             return
         }
-        let outcome = index.results(query: query, filter: filter, limit: maxRendered)
+        let outcome = index.results(
+            query: query, filter: filter, limit: maxRendered,
+            favorites: filter == .favorites ? Set(favorites.tools) : nil
+        )
         matches = outcome.matches
         visibleMatches = outcome.visible
         scopeExpanded = outcome.scopeExpanded
@@ -131,6 +139,8 @@ final class AppModel: ObservableObject {
     func load() {
         loadResources()
         savedStore = Store.loadSaved()
+        favorites = Store.loadFavorites()
+        history = Store.loadHistory()
 
         // Re-apply Chinese notes at load time so editing the user dictionary
         // takes effect on next launch without requiring a full rescan.
@@ -202,6 +212,118 @@ final class AppModel: ObservableObject {
     func openUserResourcesDirectory() {
         AppPaths.prepare()
         NSWorkspace.shared.open(AppPaths.supportDirectory)
+    }
+
+    // MARK: - Favourites
+
+    func isFavorite(_ name: String) -> Bool { favorites.contains(tool: name) }
+
+    func toggleFavorite(tool name: String) {
+        favorites.toggle(tool: name)
+        do {
+            try Store.saveFavorites(favorites)
+            notice = isFavorite(name)
+                ? "已收藏 \(name) · 可在「已收藏」范围查看"
+                : "已取消收藏 \(name)"
+        } catch {
+            notice = "收藏保存失败：\(error.localizedDescription)"
+        }
+        if filter == .favorites { recomputeResults() }
+    }
+
+    // MARK: - Run history
+
+    func historyDate(_ iso: String) -> String { Self.displayDate(iso) }
+
+    func clearHistory() {
+        history = RunHistory()
+        do {
+            try Store.saveHistory(history)
+            notice = "运行历史已清空"
+        } catch {
+            notice = "清空失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func makeRecord(
+        tool: Tool, example: Example, command: String, startedAt: Date,
+        exitCode: Int32?, viaTerminal: Bool, outputBytes: Int
+    ) -> RunRecord {
+        RunRecord(
+            id: UUID().uuidString,
+            tool: tool.name,
+            title: example.title,
+            command: command,
+            workingDirectory: workingDirectory,
+            startedAt: ISO8601DateFormatter().string(from: startedAt),
+            durationMs: Int(max(0, Date().timeIntervalSince(startedAt) * 1000)),
+            exitCode: exitCode,
+            viaTerminal: viaTerminal,
+            outputBytes: outputBytes
+        )
+    }
+
+    private func appendHistory(_ record: RunRecord) {
+        history.items.insert(record, at: 0)
+        if history.items.count > Store.historyLimit {
+            history.items = Array(history.items.prefix(Store.historyLimit))
+        }
+        do {
+            try Store.saveHistory(history)
+        } catch {
+            notice = "运行历史保存失败：\(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Custom examples
+
+    func isUserExample(_ example: Example) -> Bool {
+        example.id.hasPrefix("user-")
+    }
+
+    /// Returns nil on success, or a human-readable validation/error message.
+    func saveCustomExample(
+        tool: String, title: String, summary: String, argv: [String],
+        risk: String, interactive: Bool
+    ) -> String? {
+        let trimmedTool = tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTool.isEmpty, !trimmedTitle.isEmpty, !argv.isEmpty else {
+            return "工具名、标题和参数都不能为空。"
+        }
+        let trimmedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let example = Example(
+            id: "user-\(UUID().uuidString.prefix(8))",
+            tool: trimmedTool,
+            title: trimmedTitle,
+            summary: trimmedSummary.isEmpty ? nil : trimmedSummary,
+            argv: argv,
+            fields: ExampleRepo.extractFields(argv),
+            risk: risk,
+            interactive: interactive ? true : nil
+        )
+        var patch = ExampleRepo.userPatch() ?? UserExamplePatch(examples: nil, remove: nil)
+        var items = patch.examples ?? []
+        items.append(example)
+        patch.examples = items
+        do {
+            try ExampleRepo.saveUserPatch(patch)
+            reloadResources()
+            return nil
+        } catch {
+            return "保存失败：\(error.localizedDescription)"
+        }
+    }
+
+    func deleteCustomExample(_ example: Example) {
+        guard var patch = ExampleRepo.userPatch() else { return }
+        patch.examples?.removeAll { $0.id == example.id }
+        do {
+            try ExampleRepo.saveUserPatch(patch)
+            reloadResources()
+        } catch {
+            notice = "删除失败：\(error.localizedDescription)"
+        }
     }
 
     func rescan() {
@@ -285,6 +407,8 @@ final class AppModel: ObservableObject {
             workingDirectory: URL(fileURLWithPath: workingDirectory),
             loginPath: loginPath
         )
+        let startedAt = Date()
+        let command = pendingCommandText
 
         let process = RunningProcess()
         process.onOutput = { [weak self] text in
@@ -305,6 +429,11 @@ final class AppModel: ObservableObject {
             } else {
                 self.exitText = "未取得退出码"
             }
+            self.appendHistory(self.makeRecord(
+                tool: tool, example: example, command: command,
+                startedAt: startedAt, exitCode: killed ? nil : status,
+                viaTerminal: false, outputBytes: self.runOutput.utf8.count
+            ))
         }
 
         do {
@@ -332,6 +461,12 @@ final class AppModel: ObservableObject {
                 workingDirectory: URL(fileURLWithPath: workingDirectory)
             )
             notice = "已在 Terminal 中打开 \(tool.name)（高风险或交互式命令需要在真实终端运行）"
+            appendHistory(makeRecord(
+                tool: tool, example: example,
+                command: ([tool.path] + argv).joined(separator: " "),
+                startedAt: Date(), exitCode: nil,
+                viaTerminal: true, outputBytes: 0
+            ))
         } catch {
             notice = "无法打开 Terminal：\(error.localizedDescription)"
         }

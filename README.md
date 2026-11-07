@@ -110,7 +110,10 @@ open dist/CmdBook.app       # 启动
   examples.json      用户自定义示例（可选）
   tool-zh.json       用户中文词条/规则（可选）
   tools.json         扫描快照（应用生成）
+  tools-debug.json   限量调试扫描产物（应用生成）
   saved.json         保存的参数组合（应用生成）
+  favorites.json     收藏的工具（应用生成）
+  history.json       运行历史，上限 200 条（应用生成）
 ```
 
 合并规则是**按字段增量合并，不是整体替换**：
@@ -171,27 +174,68 @@ open dist/CmdBook.app       # 启动
 `danger` 类示例一律转交 Terminal，不会在应用内执行。编辑 bundle 内
 `Resources/*.json` 仍需重新执行 `./build.sh`，详见前文说明。
 
+## 收藏、自定义示例与运行历史
+
+这三块构成「创建 → 执行 → 留痕 → 复用」的闭环，数据全部落在应用数据目录，
+不随版本升级丢失：
+
+| 文件 | 内容 |
+| --- | --- |
+| `favorites.json` | 收藏的工具名 |
+| `history.json` | 最近 200 条运行记录（最新在前） |
+| `saved.json` | 保存的参数组合 |
+| `examples.json` | 用户自定义示例（增量补丁） |
+
+**收藏**：点击工具行右侧的星标即可收藏，顶部会给出「已收藏 xxx」的提示。
+查看入口在侧栏的**范围筛选器「已收藏 ★」**——切过去就是收藏列表，跨「用户安装 /
+系统自带」分类汇总；该范围为空时列表会提示如何添加。终端可用
+`$BIN --favorites` 列出同样的结果。收藏范围下不会自动扩大到全部工具。
+
+**自定义示例**：不必手写 JSON。用菜单「工具 → 新建示例」（**⌘N**）或详情页
+「+ 新建示例」打开表单，填写工具名、标题、说明、**每行一个参数**、
+风险等级与是否交互式。`{{key}}` 占位符会自动提取成运行时可编辑的字段，
+例如：
+
+```
+-i
+{{input}}
+-c:v
+libx264
+{{output}}
+```
+
+保存后立即热重载，新示例出现在对应工具的「常用示例」里，与内置示例同等待遇；
+自建示例卡片上会出现「删除」按钮。底层写入用户 `examples.json` 的 `examples` 数组，
+内置库不受影响。
+
+**运行历史**：每次在应用内执行或转交 Terminal 都会记录工具、命令、工作目录、
+开始时间、耗时、退出码与输出字节数；控制台底部「最近运行」展示最近 8 条，
+点击任一条复制其命令。菜单「工具 → 清空运行历史」可清空。终止/转交的记录
+退出码为空并标注 `Terminal` / `已终止`。
+
 ## 工程结构
 
 ```
 Sources/
-  main.swift            入口；--scan / --verify / --runprobe / --search / --bench / --resources
+  main.swift            入口；--scan / --verify / --runprobe / --search / --bench /
+                        --resources / --favorites
   AppDelegate.swift     NSApplication 生命周期、主菜单与快捷键
-  AppModel.swift        状态、中文词典套用、搜索结果缓存、扫描调度、执行编排
+  AppModel.swift        状态、搜索结果缓存、收藏与运行历史、扫描调度、执行编排
   ContentView.swift     SwiftUI 三栏界面（列表 / 详情 / 运行控制台）
-  Models.swift          数据模型（含向后兼容的解码器）
+  ExampleEditorView.swift 应用内自定义示例表单
+  Models.swift          数据模型（工具/示例/收藏/运行记录，含兼容解码器）
   Paths.swift           应用目录、资源定位、来源分类、交互/危险工具名单
   ChineseNotes.swift    中文词典载入、用户增量合并、三层说明生成
-  ExampleRepo.swift     示例库载入、用户增量合并
-  SearchIndex.swift     启动时预建的小写 UTF-8 字节索引
+  ExampleRepo.swift     示例库载入、用户增量合并、占位符字段提取
+  SearchIndex.swift     启动时预建的小写 UTF-8 字节索引与收藏过滤
   Search.swift          基于索引的纯函数中文优先排序
+  ListScrollResetter.swift 搜索变化时复位侧栏列表滚动位置
   ProcessSupport.swift  子进程封装（临时文件捕获 + 硬超时 + 独立 CWD）、登录 PATH 解析
   Scanner.swift         PATH 发现、并发用法探测、中文说明写入快照
   TextCleanup.swift     ANSI/重字符清理、规范化、描述与 EXAMPLES 提取
-  ExampleRepo.swift     内置示例库载入
   Runner.swift          白名单执行器、流式输出、Terminal 转交
-  Store.swift           快照与保存项读写（原子写入）
-  Headless.swift        无界面扫描、自检、中文搜索、性能基准
+  Store.swift           快照/参数/收藏/历史读写（原子写入）
+  Headless.swift        无界面扫描、自检、中文搜索、性能基准、资源诊断
 Scripts/
   MakeIcon.swift        Core Graphics 自绘 1024×1024 图标
   MakePerfDiagram.swift 自绘文章配图（1360×500 PNG）
@@ -221,9 +265,10 @@ docs/
 无界面命令（`BIN=dist/CmdBook.app/Contents/MacOS/CmdBook`）：
 
 ```sh
-$BIN --verify                # 48 项自检，含中文搜索、快照保护、执行策略与用户资源合并
+$BIN --verify                # 57 项自检，含中文搜索、快照保护、执行策略、资源合并与收藏
 $BIN --runprobe              # 流式执行器端到端验证
-$BIN --resources             # 查看当前生效的示例/词条/规则与用户补丁状态
+$BIN --resources             # 查看生效的示例/词条/规则、收藏数与历史条数
+$BIN --favorites             # 列出「已收藏」范围里的工具（与界面筛选器一致）
 $BIN --scan                  # 全量扫描并写入快照
 $BIN --scan --limit 50       # 限量调试扫描，写入 tools-debug.json，绝不覆盖生产索引
 $BIN --search 数据恢复       # 对真实快照做中文检索（输出前 10 条）
@@ -234,7 +279,8 @@ $BIN --bench                # 交互性能回归测试（帧预算 16.7 ms）
 `--verify` 覆盖：示例库载入、占位符展开、危险/交互工具拦截、进程执行与输出捕获、
 探测子进程不污染工作区、man 重字符清理、`EXAMPLES` 段提取、PATH 去重、
 中文词典与「数据恢复 → photorec」搜索命中、最长前缀规则、`risk` 执行策略、
-Terminal 脚本的工作目录与自删除、退化快照拒绝覆盖、用户资源增量合并与热重载、快照编解码。
+Terminal 脚本的工作目录与自删除、退化快照拒绝覆盖、用户资源增量合并与热重载、
+收藏持久化与「已收藏」范围过滤、运行历史裁剪、占位符字段提取、示例补丁写回、快照编解码。
 
 **快照保护**：限量扫描写入独立的 `tools-debug.json`；全量扫描若工具数或用法文本数
 比上一份下降超过 10%（例如触发 180 秒全局超时），会拒绝写入并保留 last-good 索引，

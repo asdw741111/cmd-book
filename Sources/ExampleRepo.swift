@@ -51,4 +51,34 @@ enum ExampleRepo {
         let argv = (try? Runner.expandedArguments(example, values: values)) ?? example.argv
         return ([example.tool] + argv).joined(separator: " ")
     }
+
+    /// Derives editable fields from `{{key}}` placeholders in argv elements, so
+    /// users only have to type arguments, not a separate field schema.
+    static func extractFields(_ argv: [String]) -> [ExampleField] {
+        let pattern = try? NSRegularExpression(pattern: #"\{\{([A-Za-z0-9_]+)\}\}"#)
+        var keys: [String] = []
+        for argument in argv {
+            guard let pattern = pattern else { break }
+            let range = NSRange(argument.startIndex..., in: argument)
+            for match in pattern.matches(in: argument, range: range) {
+                guard let keyRange = Range(match.range(at: 1), in: argument) else { continue }
+                let key = String(argument[keyRange])
+                if !keys.contains(key) { keys.append(key) }
+            }
+        }
+        return keys.map {
+            ExampleField(key: $0, label: $0, value: "", hint: "运行时填写")
+        }
+    }
+
+    /// Writes the user overlay. `to:` exists so tests can use a temp file.
+    static func saveUserPatch(
+        _ patch: UserExamplePatch,
+        to url: URL = AppPaths.userResourceURL(name: "examples", extension: "json")
+    ) throws {
+        AppPaths.prepare()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(patch).write(to: url, options: [.atomic])
+    }
 }

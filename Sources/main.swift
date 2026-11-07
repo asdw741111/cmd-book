@@ -9,6 +9,10 @@ if arguments.contains("--resources") {
     exit(0)
 }
 
+if arguments.contains("--favorites") {
+    exit(Headless.favorites())
+}
+
 if arguments.contains("--bench") {
     exit(Headless.bench())
 }
