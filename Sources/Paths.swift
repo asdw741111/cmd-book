@@ -14,7 +14,15 @@ enum AppPaths {
     static var savedURL: URL { supportDirectory.appendingPathComponent("saved.json") }
 
     static func prepare() {
-        try? FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: supportDirectory, withIntermediateDirectories: true
+            )
+        } catch {
+            AppLog.store.error(
+                "无法创建应用数据目录: \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     /// Works both when launched as a real .app bundle and when the raw binary is

@@ -4,10 +4,28 @@ enum Store {
     /// `.atomic` replaces the file via rename, which macOS can refuse when the
     /// existing file carries a `com.apple.provenance` attribute owned by a
     /// previous build of the app. Fall back to an in-place write in that case.
+    private static func decode<T: Decodable>(
+        _ type: T.Type, from url: URL, label: String, fallback: T
+    ) -> T {
+        guard FileManager.default.fileExists(atPath: url.path) else { return fallback }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            AppLog.store.error(
+                "\(label, privacy: .public) 解码失败: \(error.localizedDescription, privacy: .public)"
+            )
+            return fallback
+        }
+    }
+
     private static func write(_ data: Data, to url: URL) throws {
         do {
             try data.write(to: url, options: [.atomic])
         } catch {
+            AppLog.store.warning(
+                "原子写被拒绝，回退原位写入 \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
             try data.write(to: url)
         }
     }
@@ -20,8 +38,16 @@ enum Store {
 
     static func loadSnapshot(from url: URL = AppPaths.snapshotURL) -> Snapshot? {
         AppPaths.prepare()
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(Snapshot.self, from: data)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(Snapshot.self, from: data)
+        } catch {
+            AppLog.store.error(
+                "快照 \(url.lastPathComponent, privacy: .public) 解码失败: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
     }
 
     /// Writes atomically. When `protectExisting` is true, a snapshot that is
@@ -68,11 +94,9 @@ enum Store {
 
     static func loadSaved(from url: URL = AppPaths.savedURL) -> SavedStore {
         AppPaths.prepare()
-        guard let data = try? Data(contentsOf: url),
-              let store = try? JSONDecoder().decode(SavedStore.self, from: data) else {
-            return SavedStore()
-        }
-        return store
+        return decode(
+            SavedStore.self, from: url, label: "保存的参数组合", fallback: SavedStore()
+        )
     }
 
     static func saveSaved(
@@ -97,11 +121,9 @@ enum Store {
 
     static func loadFavorites(from url: URL = Self.favoritesURL) -> FavoriteStore {
         AppPaths.prepare()
-        guard let data = try? Data(contentsOf: url),
-              let store = try? JSONDecoder().decode(FavoriteStore.self, from: data) else {
-            return FavoriteStore()
-        }
-        return store
+        return decode(
+            FavoriteStore.self, from: url, label: "收藏", fallback: FavoriteStore()
+        )
     }
 
     static func saveFavorites(
@@ -115,11 +137,9 @@ enum Store {
 
     static func loadHistory(from url: URL = Self.historyURL) -> RunHistory {
         AppPaths.prepare()
-        guard let data = try? Data(contentsOf: url),
-              let history = try? JSONDecoder().decode(RunHistory.self, from: data) else {
-            return RunHistory()
-        }
-        var trimmed = history
+        var trimmed = decode(
+            RunHistory.self, from: url, label: "运行历史", fallback: RunHistory()
+        )
         if trimmed.items.count > historyLimit {
             trimmed.items = Array(trimmed.items.prefix(historyLimit))
         }

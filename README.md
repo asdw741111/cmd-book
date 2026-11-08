@@ -196,7 +196,11 @@ open dist/CmdBook.app       # 启动
 
 **自定义示例**：不必手写 JSON。用菜单「工具 → 新建示例」（**⌘N**）或详情页
 「+ 新建示例」打开表单，填写工具名、标题、说明、**每行一个参数**、
-风险等级与是否交互式。`{{key}}` 占位符会自动提取成运行时可编辑的字段，
+风险等级与是否交互式。**风险等级会从工具名与 argv 静态推导，且只能提升、不能降级**——
+表单实时显示「实际生效风险等级」与原因；即使手工编辑 JSON 把 `risk` 写成 `safe`，
+`python3 -c`、`find -exec`、`sh` 等仍会被判定为高风险并转交 Terminal，
+`curl -o` 等输出类参数会要求「确认写入」。内置示例经核对 0 条被改判。
+`{{key}}` 占位符会自动提取成运行时可编辑的字段，
 例如：
 
 ```
@@ -231,6 +235,8 @@ Sources/
   Paths.swift           应用目录、资源定位、来源分类、交互/危险工具名单
   ChineseNotes.swift    中文词典载入、用户增量合并、三层说明生成
   ExampleRepo.swift     示例库载入、用户增量合并、占位符字段提取
+  ExampleSafety.swift   从 argv 静态推导风险等级（只能提升不能降级）
+  AppLog.swift          os_log 统一日志（subsystem: local.cmdbook.macos）
   SearchIndex.swift     启动时预建的小写 UTF-8 字节索引与收藏过滤
   Search.swift          基于索引的纯函数中文优先排序
   ListScrollResetter.swift 搜索变化时复位侧栏列表滚动位置
@@ -248,7 +254,8 @@ Resources/
   examples.json         内置精选示例库（38 条 / 17 工具）
   tool-zh.json          中文元数据词典（221 精确词条 / 215 规则 / 分类兜底）
   CmdBook.icns          生成好的应用图标（提交进仓库，clone 后无需重画）
-build.sh                swiftc 编译 + 组包 + ad-hoc 签名
+build.sh                swiftc -O 编译 + 组包 + 资源完整性/plist/JSON 校验 + ad-hoc 签名
+                        （任一校验或签名失败即 exit 1，不产出残缺 .app）
 make-icon.sh            重新生成 CmdBook.icns
 docs/
   plans/2026-11-06-macos-cli-catalog-design.md   现行设计文档
@@ -269,7 +276,8 @@ docs/
 无界面命令（`BIN=dist/CmdBook.app/Contents/MacOS/CmdBook`）：
 
 ```sh
-$BIN --verify                # 66 项自检，含搜索、快照保护、执行策略、资源合并、导入合并与探测策略
+$BIN --verify                # 74 项自检，含搜索、快照保护、执行策略、资源合并、导入合并、
+                             # 探测策略、风险推导与结果集无截断
 $BIN --runprobe              # 流式执行器端到端验证
 $BIN --resources             # 查看生效的示例/词条/规则、收藏数与历史条数
 $BIN --favorites             # 列出「已收藏」范围里的工具（与界面筛选器一致）
@@ -288,7 +296,16 @@ $BIN --bench                # 交互性能回归测试（帧预算 16.7 ms）
 中文词典与「数据恢复 → photorec」搜索命中、最长前缀规则、`risk` 执行策略、
 Terminal 脚本的工作目录与自删除、退化快照拒绝覆盖、用户资源增量合并与热重载、
 收藏持久化与「已收藏」范围过滤、运行历史裁剪、占位符字段提取、示例补丁写回、
-备份格式往返、导入合并与幂等、探测策略跳过判断、mtime 增量复用、旧快照兼容解码、快照编解码。
+备份格式往返、导入合并与幂等、探测策略跳过判断、mtime 增量复用、旧快照兼容解码、
+argv 风险推导与不可降级、400 条结果集无截断、快照编解码。
+
+**可观测性**：关键路径（内置/用户资源载入、快照与用户数据解码、原子写回退、
+参数组合删除、目录创建）统一写入 `os_log`，在 Console.app 按
+subsystem `local.cmdbook.macos` 过滤即可查看；资源文件损坏不再静默退化成空词典。
+`--resources` 会显示被自动提升风险等级的示例数量。
+
+**结果集**：SwiftUI `List` 本身懒加载，已移除原先 300 条硬截断，「全部」范围下
+2107 个工具全部可达；`--bench` 实测单次查询仍约 2.6 ms，未因放开限制退化。
 
 **快照保护**：限量扫描写入独立的 `tools-debug.json`；同一探测策略下若工具数或用法文本数
 比上一份下降超过 10%（例如触发 180 秒全局超时），会拒绝写入并保留 last-good 索引，
@@ -418,6 +435,11 @@ git push origin main      # 首次可用 git push -u origin main
 
 - 所有子进程以参数数组调用，从不使用 `sh -c`；`rm` / `sudo` / `dd` / `diskutil` /
   shell 等危险工具直接拒绝执行。
+- **风险等级不信任用户声明**：自定义示例的 `risk` 只作为下限，实际等级由
+  `ExampleSafety` 从工具名与 argv 推导且只能提升。解释器执行标志（`python3 -c`、
+  `node -e`）、`find -exec/-delete`、shell 类工具判为高风险并转交 Terminal；
+  `-o`/`--output`/`--in-place` 等输出参数判为「会写入文件」并要求显式确认。
+  这样即使手工编辑 `examples.json` 把高风险示例标成 `safe`，也不会在应用内静默执行。
 - **扫描不会触发系统弹窗**：系统路径下的工具（`/usr/bin` 等 Apple 占位程序，
   如 `git`/`clang`/`java`/`python3`）以及 GUI、钥匙串类工具一律**不执行二进制**，
   只查 `man` 与 `whatis`。否则即使只带 `--help` 也会弹出「安装 Command Line

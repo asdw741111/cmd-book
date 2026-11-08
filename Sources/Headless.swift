@@ -202,6 +202,12 @@ enum Headless {
         print("已收藏工具     : \(favorites.tools.count) 个\(favorites.tools.isEmpty ? "" : "（" + favorites.tools.joined(separator: "、") + "）")")
         print("运行历史       : \(history.items.count) 条（上限 \(Store.historyLimit)）")
         print("示例总数       : \(library.examples.count)（覆盖 \(Set(library.examples.map { $0.tool }).count) 个工具）")
+        let promoted = library.examples.filter {
+            ExampleSafety.effectiveRisk(
+                tool: $0.tool, argv: $0.argv, declared: $0.risk
+            ) != $0.risk
+        }
+        print("风险自动提升   : \(promoted.count) 条\(promoted.isEmpty ? "" : "（" + promoted.map { "\($0.id)→" + ExampleSafety.label(ExampleSafety.effectiveRisk(tool: $0.tool, argv: $0.argv, declared: $0.risk)) }.joined(separator: "、") + "）")")
         if let patch = examplePatch {
             print("用户示例补丁   : 新增/覆盖 \(patch.examples?.count ?? 0) 条，禁用 \(patch.remove?.count ?? 0) 条")
         } else {
@@ -835,6 +841,55 @@ enum Headless {
             check(false, "增量扫描测试准备: \(error)", &failures)
         }
         try? fileManager.removeItem(at: incRoot)
+
+        // Static risk derivation: a declared "safe" label can never downgrade
+        // what the arguments actually allow.
+        check(ExampleSafety.effectiveRisk(
+            tool: "python3", argv: ["-c", "print(1)"], declared: "safe"
+        ) == "danger", "解释器 -c 自动提升为高风险", &failures)
+        check(ExampleSafety.effectiveRisk(
+            tool: "ffmpeg", argv: ["-i", "{{input}}", "{{output}}"], declared: "safe"
+        ) == "safe", "普通转码参数不被误判", &failures)
+        check(ExampleSafety.effectiveRisk(
+            tool: "curl", argv: ["-o", "{{output}}", "https://example.com"],
+            declared: "safe"
+        ) == "write", "输出参数提升为写入", &failures)
+        check(ExampleSafety.effectiveRisk(
+            tool: "find", argv: [".", "-exec", "rm", "{}", ";"], declared: "safe"
+        ) == "danger", "find -exec 提升为高风险", &failures)
+        check(ExampleSafety.effectiveRisk(
+            tool: "sh", argv: ["-c", "echo hi"], declared: "safe"
+        ) == "danger", "shell 工具恒为高风险", &failures)
+        check(ExampleSafety.effectiveRisk(
+            tool: "jq", argv: ["."], declared: "danger"
+        ) == "danger", "已声明的高风险不会被降级", &failures)
+
+        let disguisedTool = Tool(
+            name: "python3", path: "/usr/bin/python3", allPaths: [],
+            category: .system, description: "", usage: "", usageSource: "none",
+            manExamples: "", interactive: false
+        )
+        let disguisedExample = Example(
+            id: "disguised", tool: "python3", title: "伪装只读", summary: nil,
+            argv: ["-c", "{{code}}"], fields: [], risk: "safe", interactive: nil
+        )
+        check(Runner.policy(for: disguisedTool, example: disguisedExample) == .terminalOnly,
+              "自声明只读的任意代码执行被拦截出应用内", &failures)
+
+        // No artificial 300-row cap: everything must be reachable.
+        let crowdedTools = (0..<400).map { index in
+            Tool(
+                name: "tool\(index)", path: "/usr/bin/tool\(index)", allPaths: [],
+                category: .user, description: "", usage: "", usageSource: "none",
+                manExamples: "", interactive: false
+            )
+        }
+        let crowdedModel = AppModel()
+        crowdedModel.snapshot = Snapshot(tools: crowdedTools)
+        crowdedModel.filter = .all
+        check(crowdedModel.matches.count == 400
+              && crowdedModel.visibleMatches.count == 400,
+              "结果列表不再受 300 条硬截断", &failures)
 
         for url in [favURL, histURL, patchURL] {
             try? fileManager.removeItem(at: url)

@@ -39,11 +39,16 @@ enum ChineseNotes {
     static func userPatch(
         from url: URL = AppPaths.userResourceURL(name: "tool-zh", extension: "json")
     ) -> UserChinesePatch? {
-        guard let data = try? Data(contentsOf: url),
-              let patch = try? JSONDecoder().decode(UserChinesePatch.self, from: data) else {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(UserChinesePatch.self, from: data)
+        } catch {
+            AppLog.resources.error(
+                "用户中文词典补丁解析失败，已忽略: \(error.localizedDescription, privacy: .public)"
+            )
             return nil
         }
-        return patch
     }
 
     /// Stable longest-prefix-first ordering. Keeping the original index as the
@@ -87,11 +92,18 @@ enum ChineseNotes {
 
     static func load() -> ChineseDictionary {
         let base: ChineseDictionary
-        if let url = AppPaths.resourceURL(name: "tool-zh", extension: "json"),
-           let data = try? Data(contentsOf: url),
-           let dictionary = try? JSONDecoder().decode(ChineseDictionary.self, from: data) {
-            base = dictionary
+        if let url = AppPaths.resourceURL(name: "tool-zh", extension: "json") {
+            do {
+                let data = try Data(contentsOf: url)
+                base = try JSONDecoder().decode(ChineseDictionary.self, from: data)
+            } catch {
+                AppLog.resources.error(
+                    "内置中文词典载入失败: \(error.localizedDescription, privacy: .public)"
+                )
+                base = .empty
+            }
         } else {
+            AppLog.resources.error("找不到内置中文词典 tool-zh.json")
             base = .empty
         }
         return merging(base: base, patch: userPatch())

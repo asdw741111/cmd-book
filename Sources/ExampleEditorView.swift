@@ -29,6 +29,17 @@ struct ExampleEditorView: View {
         ExampleRepo.extractFields(parsedArguments).map { $0.key }
     }
 
+    private var derivedRisk: String {
+        ExampleSafety.effectiveRisk(
+            tool: tool, argv: parsedArguments, declared: risk
+        )
+    }
+
+    private var findings: [String] {
+        ExampleSafety.findings(tool: tool, argv: parsedArguments)
+            .map { $0.message }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("新建自定义示例").font(.title2).fontWeight(.semibold)
@@ -47,6 +58,29 @@ struct ExampleEditorView: View {
                     Text("高风险（一律转交 Terminal）").tag("danger")
                 }
                 Toggle("交互式终端程序", isOn: $interactive)
+            }
+
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: derivedRisk == "danger"
+                      ? "exclamationmark.triangle.fill" : "checkmark.shield")
+                    .foregroundStyle(
+                        derivedRisk == "danger" ? .red
+                            : (derivedRisk == "write" ? .orange : .green)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("实际生效风险等级：\(ExampleSafety.label(derivedRisk))")
+                        .font(.caption)
+                    if derivedRisk != risk {
+                        Text("已根据参数自动提升，声明的等级不能降级。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(findings, id: \.self) { message in
+                        Text("· \(message)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {

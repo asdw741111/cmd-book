@@ -74,7 +74,9 @@ final class AppModel: ObservableObject {
 
     private var runner: RunningProcess?
     private var searchIndex: SearchIndex?
-    private let maxRendered = 300
+    /// SwiftUI's List is lazy, so there is no reason to cap rows. The former
+    /// 300-row cap made ~1800 of 2107 tools unreachable in the "全部" scope.
+    private let maxRendered = Int.max
 
     var tools: [Tool] { snapshot?.tools ?? [] }
     var selectedTool: Tool? { tools.first { $0.name == selectedName } }
@@ -328,6 +330,9 @@ final class AppModel: ObservableObject {
             return "工具名、标题和参数都不能为空。"
         }
         let trimmedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let derived = ExampleSafety.effectiveRisk(
+            tool: trimmedTool, argv: argv, declared: risk
+        )
         let example = Example(
             id: "user-\(UUID().uuidString.prefix(8))",
             tool: trimmedTool,
@@ -335,7 +340,7 @@ final class AppModel: ObservableObject {
             summary: trimmedSummary.isEmpty ? nil : trimmedSummary,
             argv: argv,
             fields: ExampleRepo.extractFields(argv),
-            risk: risk,
+            risk: derived,
             interactive: interactive ? true : nil
         )
         var patch = ExampleRepo.userPatch() ?? UserExamplePatch(examples: nil, remove: nil)
@@ -345,6 +350,13 @@ final class AppModel: ObservableObject {
         do {
             try ExampleRepo.saveUserPatch(patch)
             reloadResources()
+            if derived != risk {
+                let reasons = ExampleSafety.findings(tool: trimmedTool, argv: argv)
+                    .map { $0.message }.joined(separator: "；")
+                notice = "已自动提升为「\(ExampleSafety.label(derived))」：\(reasons)"
+            } else {
+                notice = "已保存自定义示例：\(trimmedTitle)"
+            }
             return nil
         } catch {
             return "保存失败：\(error.localizedDescription)"
@@ -553,7 +565,14 @@ final class AppModel: ObservableObject {
 
     func deleteSaved(_ id: String) {
         savedStore.items.removeAll { $0.id == id }
-        try? Store.saveSaved(savedStore)
+        do {
+            try Store.saveSaved(savedStore)
+        } catch {
+            AppLog.store.error(
+                "删除参数组合后保存失败: \(error.localizedDescription, privacy: .public)"
+            )
+            notice = "删除后保存失败：\(error.localizedDescription)"
+        }
     }
 
     static func copy(_ text: String) {

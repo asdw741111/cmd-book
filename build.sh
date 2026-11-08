@@ -37,7 +37,27 @@ if [ -f "$ROOT/Resources/CmdBook.icns" ]; then
 fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-/usr/bin/codesign -s - --force "$APP" >/dev/null 2>&1 || echo "Warning: ad-hoc signing skipped."
+# A broken bundle is worse than a failed build: refuse to ship it.
+for name in examples.json tool-zh.json CmdBook.icns; do
+    if [ ! -s "$RESOURCES/$name" ]; then
+        echo "ERROR: missing or empty bundle resource: $name" >&2
+        exit 1
+    fi
+done
+/usr/bin/plutil -lint "$APP/Contents/Info.plist" >/dev/null || {
+    echo "ERROR: Info.plist is invalid" >&2
+    exit 1
+}
+for name in examples.json tool-zh.json; do
+    /usr/bin/python3 -m json.tool "$RESOURCES/$name" >/dev/null || {
+        echo "ERROR: invalid JSON resource: $name" >&2
+        exit 1
+    }
+done
+if ! /usr/bin/codesign -s - --force "$APP" >/dev/null 2>&1; then
+    echo "ERROR: ad-hoc signing failed; refusing to ship an unsigned bundle." >&2
+    exit 1
+fi
 
 echo "Built: $APP"
 echo "Headless check: $MACOS/CmdBook --verify"

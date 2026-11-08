@@ -8,8 +8,23 @@ CmdBook 的变更记录，按日期倒序。
 
 ## 2026-11-08（开发中）
 
+### 安全加固
+
+- **自定义示例不再能自声明「只读」绕过白名单**：应用内编辑器上线后，用户可写任意
+  argv 并自行选择 `risk`，而 `Runner.validate` 只校验工具名。现在由
+  `ExampleSafety` 从工具名与 argv 静态推导等级，**只能提升不能降级**；
+  `Runner.policy` 改用推导值，手工编辑 JSON 也无法绕过。编辑器实时显示实际生效
+  等级与原因。内置示例经核对 0 条被改判，既有行为不变。
+- `build.sh` 增加资源完整性、`plutil -lint`、`python3 -m json.tool` 校验；
+  签名失败不再打印 Warning 后继续，而是 `exit 1`，不产出残缺 `.app`。
+
 ### 修复
 
+- **取消 300 条列表硬截断**：原先「全部」范围下 2107 个工具只有前 300 个可达。
+  SwiftUI `List` 本身懒加载，放开后 `--bench` 单次查询仍约 2.6 ms，无性能退化。
+- **静默失败可观测**：关键路径（内置/用户资源载入、快照与用户数据解码、原子写回退、
+  目录创建）统一写 `os_log`（subsystem `local.cmdbook.macos`），资源损坏不再静默
+  退化为空词典；`--resources` 显示被自动提升风险等级的示例数量。
 - **扫描不再触发系统弹窗**：`/usr/bin` 下的 Apple 占位程序（`git`、`clang`、`python3`、
   `java` 等）即使只带 `--help` 也会弹出「安装 Command Line Developer Tools」或 Java
   运行时提示；`security`、`codesign`、git 凭据助手等会请求钥匙串授权。现在所有

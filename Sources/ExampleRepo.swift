@@ -6,11 +6,16 @@ enum ExampleRepo {
     static func userPatch(
         from url: URL = AppPaths.userResourceURL(name: "examples", extension: "json")
     ) -> UserExamplePatch? {
-        guard let data = try? Data(contentsOf: url),
-              let patch = try? JSONDecoder().decode(UserExamplePatch.self, from: data) else {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(UserExamplePatch.self, from: data)
+        } catch {
+            AppLog.resources.error(
+                "用户示例补丁解析失败，已忽略: \(error.localizedDescription, privacy: .public)"
+            )
             return nil
         }
-        return patch
     }
 
     /// Pure merge so it can be unit tested without touching the user's files.
@@ -30,11 +35,18 @@ enum ExampleRepo {
 
     static func load() -> ExampleLibrary {
         let base: ExampleLibrary
-        if let url = AppPaths.resourceURL(name: "examples", extension: "json"),
-           let data = try? Data(contentsOf: url),
-           let library = try? JSONDecoder().decode(ExampleLibrary.self, from: data) {
-            base = library
+        if let url = AppPaths.resourceURL(name: "examples", extension: "json") {
+            do {
+                let data = try Data(contentsOf: url)
+                base = try JSONDecoder().decode(ExampleLibrary.self, from: data)
+            } catch {
+                AppLog.resources.error(
+                    "内置示例库载入失败: \(error.localizedDescription, privacy: .public)"
+                )
+                base = ExampleLibrary(version: 1, examples: [])
+            }
         } else {
+            AppLog.resources.error("找不到内置示例库 examples.json")
             base = ExampleLibrary(version: 1, examples: [])
         }
         return merging(base: base, patch: userPatch())

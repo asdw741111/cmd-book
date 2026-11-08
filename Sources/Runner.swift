@@ -92,10 +92,15 @@ enum Runner {
     }
 
     static func policy(for tool: Tool, example: Example) -> ExecutionPolicy {
-        if example.isInteractive || tool.interactive || example.risk == "danger" {
+        // Derive from argv rather than trusting `example.risk`: user-authored
+        // examples (and hand-edited JSON) must not be able to self-declare safe.
+        let risk = ExampleSafety.effectiveRisk(
+            tool: tool.name, argv: example.argv, declared: example.risk
+        )
+        if example.isInteractive || tool.interactive || risk == "danger" {
             return .terminalOnly
         }
-        if example.risk == "write" { return .confirmWrite }
+        if risk == "write" { return .confirmWrite }
         return .inApp
     }
 }

@@ -91,9 +91,6 @@ struct SidebarView: View {
                          ? "已收藏 \(model.matches.count) 个工具"
                          : "\(model.matches.count) 个结果")
                     Spacer()
-                    if model.matches.count > model.visibleMatches.count {
-                        Text("仅显示前 \(model.visibleMatches.count) 个")
-                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
