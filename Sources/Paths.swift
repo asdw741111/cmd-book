@@ -68,6 +68,27 @@ enum Classifier {
         "script", "bc", "lesspipe"
     ]
 
+    /// Even a real binary (e.g. Homebrew's) can launch a GUI, request keychain
+    /// access or trigger a system install dialog. Never execute these.
+    static let guiPromptNames: Set<String> = [
+        "open", "osascript", "security", "codesign", "screencapture", "qlmanage",
+        "java", "java_home", "xcrun", "xcodebuild", "xcode-select",
+        "launchctl", "networksetup", "systemsetup", "softwareupdate", "installer",
+        "ssh-add", "git-credential-osxkeychain", "defaults", "diskutil", "hdiutil"
+    ]
+
+    /// Apple's `/usr/bin` shims (git, clang, java, python3, make ...) pop a
+    /// "Command Line Developer Tools" / Java / keychain dialog even when invoked
+    /// with `--help`. System tools are therefore documented from `man`/`whatis`
+    /// only; their binaries are never executed during a scan.
+    static func shouldSkipBinaryProbe(name: String, path: String) -> Bool {
+        let toolCategory = category(for: path)
+        return helpSkipNames.contains(name)
+            || guiPromptNames.contains(name)
+            || toolCategory == .runtime
+            || toolCategory == .system
+    }
+
     /// Never executed inside the app; routed to Terminal.app instead.
     static let terminalOnlyNames: Set<String> = [
         "vim", "vi", "nano", "emacs", "pico", "less", "more",

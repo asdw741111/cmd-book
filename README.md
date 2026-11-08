@@ -51,9 +51,12 @@ open dist/CmdBook.app       # 启动
 `CmdBook.icns` 到 `.app` 包、写 `PkgInfo`、执行 `codesign -s -` 临时签名。
 `-O` 是发布构建必需项，去掉会让 `--bench` 的实测数字与实际分发包不一致。
 
-首次启动会自动扫描一次；之后用「重新扫描」按钮或 `⌘R` 更新索引。
+首次启动会自动扫描一次；之后用「重新扫描」按钮或 `⌘R` 做**增量更新**——
+以 `name + path + mtime` 为键复用未变化工具的探测结果，实测 2107 个工具
+从全量约 60 秒降到约 3.3 秒。需要重新探测全部工具时用菜单「强制全量重扫」
+（`⌘⇧R`）或 `BIN --scan --full`。
 `⌘F` 聚焦搜索，`Esc` 清空查询，方向键移动选择。左侧可在
-「用户安装 / 全部 / 系统自带」间切换。
+「用户安装 / 已收藏 ★ / 全部 / 系统自带」间切换。
 
 ## 中文说明体系
 
@@ -218,7 +221,8 @@ libx264
 ```
 Sources/
   main.swift            入口；--scan / --verify / --runprobe / --search / --bench /
-                        --resources / --favorites
+                        --resources / --favorites / --export / --import / --full
+  Backup.swift          用户数据打包与按 id 合并导入
   AppDelegate.swift     NSApplication 生命周期、主菜单与快捷键
   AppModel.swift        状态、搜索结果缓存、收藏与运行历史、扫描调度、执行编排
   ContentView.swift     SwiftUI 三栏界面（列表 / 详情 / 运行控制台）
@@ -231,7 +235,7 @@ Sources/
   Search.swift          基于索引的纯函数中文优先排序
   ListScrollResetter.swift 搜索变化时复位侧栏列表滚动位置
   ProcessSupport.swift  子进程封装（临时文件捕获 + 硬超时 + 独立 CWD）、登录 PATH 解析
-  Scanner.swift         PATH 发现、并发用法探测、中文说明写入快照
+  Scanner.swift         PATH 发现、mtime 增量复用、探测策略、中文说明写入快照
   TextCleanup.swift     ANSI/重字符清理、规范化、描述与 EXAMPLES 提取
   Runner.swift          白名单执行器、流式输出、Terminal 转交
   Store.swift           快照/参数/收藏/历史读写（原子写入）
@@ -265,12 +269,15 @@ docs/
 无界面命令（`BIN=dist/CmdBook.app/Contents/MacOS/CmdBook`）：
 
 ```sh
-$BIN --verify                # 57 项自检，含中文搜索、快照保护、执行策略、资源合并与收藏
+$BIN --verify                # 66 项自检，含搜索、快照保护、执行策略、资源合并、导入合并与探测策略
 $BIN --runprobe              # 流式执行器端到端验证
 $BIN --resources             # 查看生效的示例/词条/规则、收藏数与历史条数
 $BIN --favorites             # 列出「已收藏」范围里的工具（与界面筛选器一致）
-$BIN --scan                  # 全量扫描并写入快照
+$BIN --scan                  # 增量扫描并写入快照
+$BIN --scan --full           # 强制全量重扫（跳过 mtime 复用）
 $BIN --scan --limit 50       # 限量调试扫描，写入 tools-debug.json，绝不覆盖生产索引
+$BIN --export backup.json    # 导出全部用户数据
+$BIN --import backup.json    # 按 id/名称合并导入（幂等，不覆盖内置资源）
 $BIN --search 数据恢复       # 对真实快照做中文检索（输出前 10 条）
 $BIN --search 转码
 $BIN --bench                # 交互性能回归测试（帧预算 16.7 ms）
@@ -280,11 +287,18 @@ $BIN --bench                # 交互性能回归测试（帧预算 16.7 ms）
 探测子进程不污染工作区、man 重字符清理、`EXAMPLES` 段提取、PATH 去重、
 中文词典与「数据恢复 → photorec」搜索命中、最长前缀规则、`risk` 执行策略、
 Terminal 脚本的工作目录与自删除、退化快照拒绝覆盖、用户资源增量合并与热重载、
-收藏持久化与「已收藏」范围过滤、运行历史裁剪、占位符字段提取、示例补丁写回、快照编解码。
+收藏持久化与「已收藏」范围过滤、运行历史裁剪、占位符字段提取、示例补丁写回、
+备份格式往返、导入合并与幂等、探测策略跳过判断、mtime 增量复用、旧快照兼容解码、快照编解码。
 
-**快照保护**：限量扫描写入独立的 `tools-debug.json`；全量扫描若工具数或用法文本数
+**快照保护**：限量扫描写入独立的 `tools-debug.json`；同一探测策略下若工具数或用法文本数
 比上一份下降超过 10%（例如触发 180 秒全局超时），会拒绝写入并保留 last-good 索引，
-界面给出可见提示而不会用退化结果替换内存状态。
+界面给出可见提示而不会用退化结果替换内存状态。快照记录 `probePolicyVersion`，
+探测策略本身变化时允许覆盖（属预期的覆盖率变化，不是退化）。
+原子写若被系统拒绝（带 `com.apple.provenance` 的文件），自动回退原位写入。
+
+**导入导出**：备份只含用户数据（自定义示例、词典补丁、参数组合、收藏、运行历史），
+不含可再生的扫描快照与内置资源。导入按 id/名称合并去重，重复导入幂等；
+GUI 在「工具」菜单，CLI 用 `--export` / `--import`。
 
 **执行策略**：`risk` 不只是标签——`safe` 在应用内执行，`write` 的确认按钮变为
 「确认写入」并给出覆盖警告，`danger` 与交互式工具一律转交 Terminal。
@@ -404,10 +418,15 @@ git push origin main      # 首次可用 git push -u origin main
 
 - 所有子进程以参数数组调用，从不使用 `sh -c`；`rm` / `sudo` / `dd` / `diskutil` /
   shell 等危险工具直接拒绝执行。
-- 探测阶段每个进程使用**独立临时工作目录**（结束后清理），避免 CLI 在被探测时
-  向工作区写配置或缓存；应用包内的 `runtime` 二进制一律不执行 `--help`。
-- 探测硬约束：单进程 1.5 秒 `SIGKILL`、并发 12、捕获上限 256 KiB、全局软超时 180 秒。
-- 快照原子写入，中断不会破坏上一份好数据。
+- **扫描不会触发系统弹窗**：系统路径下的工具（`/usr/bin` 等 Apple 占位程序，
+  如 `git`/`clang`/`java`/`python3`）以及 GUI、钥匙串类工具一律**不执行二进制**，
+  只查 `man` 与 `whatis`。否则即使只带 `--help` 也会弹出「安装 Command Line
+  Developer Tools」、Java 运行时提示或钥匙串授权。输出中的「未执行二进制」即该项统计。
+- 探测阶段每个进程使用**独立临时工作目录与独立 HOME**（结束后清理），避免 CLI
+  向工作区/`~/Library` 写配置或访问真实登录钥匙串；应用包内的 `runtime` 二进制
+  一律不执行 `--help`。只读的 `man`/`whatis` 保留真实 HOME 以复用格式化缓存。
+- 探测硬约束：单进程 1.5 秒 `SIGKILL`、并发 20、捕获上限 256 KiB、全局软超时 180 秒。
+- 快照原子写入（受限时回退原位写），中断不会破坏上一份好数据。
 - GUI 进程不继承 shell PATH，执行时使用工具绝对路径并显式注入扫描时记录的 PATH。
 
 ## 已知限制

@@ -3,8 +3,9 @@ import Foundation
 enum ExampleRepo {
     /// User overlay, if present. Malformed files are ignored rather than
     /// silently wiping the bundled library.
-    static func userPatch() -> UserExamplePatch? {
-        let url = AppPaths.userResourceURL(name: "examples", extension: "json")
+    static func userPatch(
+        from url: URL = AppPaths.userResourceURL(name: "examples", extension: "json")
+    ) -> UserExamplePatch? {
         guard let data = try? Data(contentsOf: url),
               let patch = try? JSONDecoder().decode(UserExamplePatch.self, from: data) else {
             return nil

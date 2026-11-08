@@ -1,17 +1,59 @@
 # Changelog
 
-All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
+CmdBook 的变更记录，按日期倒序。
 
-## 1.1.0 (2026-11-07)
+> 说明：仓库 2026-11-05 的早期提交属于另一个 Web 监控面板示例，与 CmdBook 无关，
+> 相关文件已于 2026-11-06 清理。历史提交 SHA 曾因修正 GitHub 作者归属而整体重写，
+> 因此本文件不再引用具体 commit 链接。
 
+## 2026-11-08（开发中）
 
-### Features
+### 修复
 
-* **app:** wire routing and views ([22bb250](https://github.com/asdw741111/cmd-book/commit/22bb2503fe88e56689b81c8b7bad62900b54cf5a))
-* **charts:** add SVG chart builders ([9063620](https://github.com/asdw741111/cmd-book/commit/9063620680cdd11591379eaf5b52ce07e1e74fc1))
-* CmdBook macOS 原生命令行工具手册 ([683d544](https://github.com/asdw741111/cmd-book/commit/683d54481f8cca89c83754492502d02064ef3f98))
-* **data:** add sample data module ([521516a](https://github.com/asdw741111/cmd-book/commit/521516a297032fb2dbb1cdf43f93dd31f45feb0e))
-* **table:** add sortable table builders ([8985add](https://github.com/asdw741111/cmd-book/commit/8985add3db90e48ef02a1c752879cd183b526e36))
-* **theme:** add theme module with localStorage persistence ([6d50eba](https://github.com/asdw741111/cmd-book/commit/6d50eba5c33873173f29b5e4b2eac67e4030b6eb))
-* **ui:** add shell and styles ([aeaaf4a](https://github.com/asdw741111/cmd-book/commit/aeaaf4af9d25d1d40e45b0a7feb69f4ecad40454))
-* **ui:** dual-encode status pills and prevent cell wrapping ([131b5ab](https://github.com/asdw741111/cmd-book/commit/131b5ab91967dc625bcc23a8d9837f4d911e5d6d))
+- **扫描不再触发系统弹窗**：`/usr/bin` 下的 Apple 占位程序（`git`、`clang`、`python3`、
+  `java` 等）即使只带 `--help` 也会弹出「安装 Command Line Developer Tools」或 Java
+  运行时提示；`security`、`codesign`、git 凭据助手等会请求钥匙串授权。现在所有
+  系统路径下的工具以及 GUI/授权类工具都**不再执行二进制**，只通过 `man` 与
+  `whatis` 获取说明；`--help` 探测子进程改用一次性 HOME，隔离真实钥匙串。
+- **快照原子写失败**：macOS 对带有 `com.apple.provenance` 扩展属性的文件可能拒绝
+  原子替换；加入原位写回退，避免扫描结果「算完却存不下来」。
+- 搜索结果变化时复位侧栏列表滚动位置（此前点击中文关键词后首行被裁）。
+
+### 新增
+
+- **增量扫描**：以可执行文件的 `name + path + mtime` 为键复用上次探测结果，未变化
+  的工具跳过所有子进程；实测全量 59.9 秒 → 增量 3.3 秒（2107/2107 复用）。
+  菜单「增量重新扫描 ⌘R」与「强制全量重扫 ⌘⇧R」，CLI 用 `--full` 强制全量。
+- **用户数据导入导出**：把自定义示例、中文词典补丁、保存的参数、收藏与运行历史
+  打包为一份 JSON；导入采用按 id/名称合并去重，重复导入幂等，不覆盖内置资源。
+  菜单「导出/导入用户数据…」，CLI 用 `--export <path>` / `--import <path>`。
+- 扫描输出新增「增量复用」「未执行二进制」统计；快照记录 `probePolicyVersion`，
+  使质量闸门能区分「探测策略变更」与「意外退化」。
+- 自定义示例编辑器（⌘N）：逐行 argv、`{{key}}` 自动提取字段、风险等级、可删除。
+- 收藏：筛选器「已收藏 ★」独立范围、星标即时提示、空状态引导、`--favorites` 查看。
+- 运行历史：记录命令/退出码/耗时/工作目录/是否转交 Terminal，控制台展示最近 8 条，
+  上限 200 条。
+- 用户资源覆盖层：`~/Library/Application Support/CmdBook/examples.json` 与
+  `tool-zh.json` 增量合并，⌘⌥R 热重载，`--resources` 诊断。
+
+### 变更
+
+- 系统工具的用法来源从 `--help` 转为 `man`/`whatis`；中文说明仍由词典与兜底保证
+  100% 覆盖，但 `usageSource=help` 的数量会下降（属预期）。
+- 探测并发上限 12 → 20，`man`/`whatis` 保留真实 HOME 以复用格式化缓存。
+
+## 2026-11-07
+
+- 修复快照保护：`--scan --limit` 改写入独立调试文件，退化扫描不再覆盖 last-good 索引。
+- Terminal 转交路径补回安全校验，脚本注入工作目录并自删除。
+- `risk` 真正参与执行策略：`danger` 转 Terminal、`write` 需显式写入确认。
+- 发布构建启用 `-O`；中文规则改最长前缀优先（`gif2webp` 不再被 `gif` 遮蔽）。
+- 清理历史遗留文件，同步 README 与仓库维护说明；修正 GitHub 提交作者归属。
+
+## 2026-11-06
+
+- 首个 CmdBook 版本：SwiftUI/AppKit 原生应用，扫描登录 PATH、捕获 `--help`/`man`/`whatis`
+  用法、中文词典三层说明、中文优先搜索、白名单 argv 执行与流式输出。
+- 预建 UTF-8 搜索索引并缓存结果，把一次输入/刷新从 1784 ms 降到约 4 ms（后续 `-O`
+  构建进一步降到约 2.4 ms）。
+- 程序化绘制应用图标；补充 README、设计文档与界面预览图。

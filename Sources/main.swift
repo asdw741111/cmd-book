@@ -36,9 +36,19 @@ if arguments.contains("--scan") || arguments.contains("--verify") {
         if let index = arguments.firstIndex(of: "--limit"), index + 1 < arguments.count {
             limit = Int(arguments[index + 1])
         }
-        Headless.scan(limit: limit)
+        Headless.scan(limit: limit, forceFull: arguments.contains("--full"))
     }
     exit(exitCode)
+}
+
+if let exportIndex = arguments.firstIndex(of: "--export"),
+   exportIndex + 1 < arguments.count {
+    exit(Headless.exportBackup(to: arguments[exportIndex + 1]))
+}
+
+if let importIndex = arguments.firstIndex(of: "--import"),
+   importIndex + 1 < arguments.count {
+    exit(Headless.importBackup(from: arguments[importIndex + 1]))
 }
 
 let application = NSApplication.shared

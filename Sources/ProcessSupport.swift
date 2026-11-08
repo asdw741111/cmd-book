@@ -30,7 +30,8 @@ enum ProcessSupport {
         arguments: [String],
         environment: [String: String],
         timeout: TimeInterval,
-        maxBytes: Int = 262144
+        maxBytes: Int = 262144,
+        isolateHome: Bool = false
     ) -> CapturedProcess {
         let fm = FileManager.default
         let tag = UUID().uuidString
@@ -57,10 +58,15 @@ enum ProcessSupport {
             return CapturedProcess()
         }
 
+        var effectiveEnvironment = environment
+        // A throwaway HOME keeps probes away from the real login keychain and
+        // prevents tools from writing into ~/Library or ~/.config.
+        if isolateHome { effectiveEnvironment["HOME"] = cwdURL.path }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
-        process.environment = environment
+        process.environment = effectiveEnvironment
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = outHandle
         process.standardError = errHandle

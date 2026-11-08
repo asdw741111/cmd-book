@@ -214,6 +214,42 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.open(AppPaths.supportDirectory)
     }
 
+    // MARK: - Import / export
+
+    func exportUserData() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "cmdbook-backup.json"
+        panel.prompt = "导出"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try Backup.export(to: url)
+            notice = "已导出用户数据：\(url.lastPathComponent)"
+        } catch {
+            notice = "导出失败：\(error.localizedDescription)"
+        }
+    }
+
+    func importUserData() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "导入"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let report = try Backup.restore(from: url)
+            favorites = Store.loadFavorites()
+            history = Store.loadHistory()
+            savedStore = Store.loadSaved()
+            reloadResources()
+            recomputeResults()
+            notice = "已导入：示例 \(report.examples) 条、词条 \(report.dictionaryEntries) 条、"
+                + "收藏 \(report.favorites) 个、历史 \(report.history) 条"
+        } catch {
+            notice = "导入失败：\(error.localizedDescription)"
+        }
+    }
+
     // MARK: - Favourites
 
     func isFavorite(_ name: String) -> Bool { favorites.contains(tool: name) }
@@ -326,14 +362,17 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func rescan() {
+    func rescan(forceFull: Bool = false) {
         guard !isScanning else { return }
         isScanning = true
-        statusText = "正在解析登录 PATH 并扫描…"
+        statusText = forceFull ? "正在解析登录 PATH 并强制全量扫描…" : "正在解析登录 PATH 并增量扫描…"
         let exampleTools = ExampleRepo.toolNames(in: library)
+        let previous = forceFull ? nil : Store.loadSnapshot()
 
         DispatchQueue.global(qos: .userInitiated).async { [self] in
-            let snapshot = Scanner.scan(exampleTools: exampleTools) { done, total in
+            let snapshot = Scanner.scan(
+                exampleTools: exampleTools, previous: previous, forceFull: forceFull
+            ) { done, total in
                 DispatchQueue.main.async { [self] in
                     self.statusText = "已扫描 \(done) / \(total) 个工具"
                 }
@@ -353,7 +392,7 @@ final class AppModel: ObservableObject {
                     self.statusText = "扫描未更新 · 已保留上一份索引"
                 } else {
                     self.snapshot = snapshot
-                    self.statusText = "扫描完成 · \(snapshot.summary.discovered) 个工具 · \(snapshot.summary.withUsage) 个有用法 · \(Self.displayDate(snapshot.scannedAt))"
+                    self.statusText = "扫描完成 · \(snapshot.summary.discovered) 个工具 · \(snapshot.summary.withUsage) 个有用法 · 复用 \(snapshot.reuseCount ?? 0) 个 · \(Self.displayDate(snapshot.scannedAt))"
                 }
             }
         }

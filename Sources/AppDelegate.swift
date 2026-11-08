@@ -59,10 +59,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         find.target = self
         toolsMenu.addItem(find)
 
-        let rescan = NSMenuItem(title: "重新扫描", action: #selector(rescanTools), keyEquivalent: "r")
+        let rescan = NSMenuItem(title: "增量重新扫描", action: #selector(rescanTools), keyEquivalent: "r")
         rescan.keyEquivalentModifierMask = [.command]
         rescan.target = self
         toolsMenu.addItem(rescan)
+
+        let fullRescan = NSMenuItem(
+            title: "强制全量重扫", action: #selector(fullRescanTools), keyEquivalent: "r"
+        )
+        fullRescan.keyEquivalentModifierMask = [.command, .shift]
+        fullRescan.target = self
+        toolsMenu.addItem(fullRescan)
 
         let newExampleItem = NSMenuItem(
             title: "新建示例", action: #selector(createExample), keyEquivalent: "n"
@@ -93,13 +100,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clearHistory.target = self
         toolsMenu.addItem(clearHistory)
 
+        toolsMenu.addItem(NSMenuItem.separator())
+
+        let exportItem = NSMenuItem(
+            title: "导出用户数据…", action: #selector(exportUserData), keyEquivalent: ""
+        )
+        exportItem.target = self
+        toolsMenu.addItem(exportItem)
+
+        let importItem = NSMenuItem(
+            title: "导入用户数据…", action: #selector(importUserData), keyEquivalent: ""
+        )
+        importItem.target = self
+        toolsMenu.addItem(importItem)
+
         NSApp.mainMenu = mainMenu
     }
 
     @objc private func focusSearch() { model.focusSearch() }
     @objc private func rescanTools() { model.rescan() }
+    @objc private func fullRescanTools() { model.rescan(forceFull: true) }
     @objc private func reloadResources() { model.reloadResources() }
     @objc private func openUserResourcesDirectory() { model.openUserResourcesDirectory() }
     @objc private func createExample() { model.showingExampleEditor = true }
     @objc private func clearRunHistory() { model.clearHistory() }
+    @objc private func exportUserData() { model.exportUserData() }
+    @objc private func importUserData() { model.importUserData() }
 }

@@ -30,12 +30,17 @@ struct Tool: Codable, Identifiable, Hashable {
     var summaryZh: String = ""
     var categoryZh: String = ""
     var keywords: [String] = []
+    /// mtime of the executable when its help text was captured. Missing on
+    /// snapshots written before incremental scanning existed, or when the
+    /// probe did not complete; such entries are always re-probed.
+    var probeMtime: Double?
 
     var id: String { name }
 
     enum CodingKeys: String, CodingKey {
         case name, path, allPaths, category, description, usage, usageSource
         case manExamples, interactive, titleZh, summaryZh, categoryZh, keywords
+        case probeMtime
     }
 }
 
@@ -56,6 +61,7 @@ extension Tool {
         summaryZh = try container.decodeIfPresent(String.self, forKey: .summaryZh) ?? ""
         categoryZh = try container.decodeIfPresent(String.self, forKey: .categoryZh) ?? ""
         keywords = try container.decodeIfPresent([String].self, forKey: .keywords) ?? []
+        probeMtime = try container.decodeIfPresent(Double.self, forKey: .probeMtime)
     }
 }
 
@@ -73,6 +79,16 @@ struct Snapshot: Codable {
     var loginPath: String = ""
     var summary: ScanSummary = ScanSummary()
     var tools: [Tool] = []
+    /// Number of tools whose probe result was reused from the previous scan.
+    /// Optional so snapshots written before incremental scanning still decode.
+    var reuseCount: Int?
+    /// Tools whose binary was deliberately not executed (system shims, GUI /
+    /// keychain prompts, app-bundled helpers). Optional for the same reason.
+    var skippedBinaryProbes: Int?
+    /// Probe policy generation. Bumped when the rules for executing binaries
+    /// change, so the quality gate can tell an intentional coverage change
+    /// from an accidental degraded scan. Optional for old snapshots.
+    var probePolicyVersion: Int?
 }
 
 struct ExampleField: Codable, Identifiable, Hashable {

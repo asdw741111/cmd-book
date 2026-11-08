@@ -1,9 +1,13 @@
 import Foundation
 
 enum Scanner {
-    static let maxConcurrency = 12
+    /// Read-only help/man probes are independent and short-lived; 20 keeps a
+    /// full scan responsive without spawning thousands of processes at once.
+    static let maxConcurrency = 20
     static let probeTimeout: TimeInterval = 1.5
     static let globalDeadline: TimeInterval = 180
+    /// 2 = system/GUI/keychain binaries are never executed during probing.
+    static let probePolicyVersion = 2
 
     static func discover(pathEnv: String) -> (dirs: [String], tools: [DiscoveredTool]) {
         var seenDirectories: Set<String> = []
@@ -49,6 +53,8 @@ enum Scanner {
         pathEnv: String? = nil,
         limit: Int? = nil,
         exampleTools: Set<String> = [],
+        previous: Snapshot? = nil,
+        forceFull: Bool = false,
         progress: ((Int, Int) -> Void)? = nil
     ) -> Snapshot {
         let loginPath = pathEnv ?? ProcessSupport.resolveLoginPath()
@@ -56,9 +62,17 @@ enum Scanner {
         let targets: [DiscoveredTool] = limit.map { Array(discovered.prefix($0)) } ?? discovered
         let dictionary = ChineseNotes.load()
 
+        var cache: [String: Tool] = [:]
+        if !forceFull, let previous = previous {
+            for tool in previous.tools {
+                cache["\(tool.name)|\(tool.path)"] = tool
+            }
+        }
+
         let started = Date()
         let results = LockedBox<[Tool?]>(Array(repeating: nil, count: targets.count))
         let counter = LockedBox<Int>(0)
+        let reusedCount = LockedBox<Int>(0)
         let group = DispatchGroup()
         let gate = DispatchSemaphore(value: maxConcurrency)
 
@@ -68,6 +82,19 @@ enum Scanner {
                     raw, usage: "", source: "none", manExamples: "",
                     description: "", dictionary: dictionary
                 ) }
+                continue
+            }
+            if let cached = reusable(raw, from: cache, dictionary: dictionary) {
+                results.withValue { $0[index] = cached }
+                let done = counter.withValue { value -> Int in
+                    value += 1
+                    return value
+                }
+                _ = reusedCount.withValue { value -> Int in
+                    value += 1
+                    return value
+                }
+                progress?(done, targets.count)
                 continue
             }
             gate.wait()
@@ -101,13 +128,44 @@ enum Scanner {
         }
 
         let formatter = ISO8601DateFormatter()
-        return Snapshot(
+        var snapshot = Snapshot(
             version: 1,
             scannedAt: formatter.string(from: Date()),
             loginPath: loginPath,
             summary: summary,
             tools: tools
         )
+        snapshot.reuseCount = reusedCount.withValue { $0 }
+        snapshot.skippedBinaryProbes = targets.filter {
+            Classifier.shouldSkipBinaryProbe(name: $0.name, path: $0.path)
+        }.count
+        snapshot.probePolicyVersion = Self.probePolicyVersion
+        return snapshot
+    }
+
+    private static func modificationTime(_ path: String) -> Double? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let date = attributes[.modificationDate] as? Date else { return nil }
+        return date.timeIntervalSince1970
+    }
+
+    /// Reuse a previous probe when the executable has not changed. The Chinese
+    /// metadata is re-applied from the current dictionary so overlays stay live.
+    private static func reusable(
+        _ raw: DiscoveredTool, from cache: [String: Tool],
+        dictionary: ChineseDictionary
+    ) -> Tool? {
+        guard let old = cache["\(raw.name)|\(raw.path)"],
+              let oldMtime = old.probeMtime,
+              let currentMtime = modificationTime(raw.path),
+              abs(oldMtime - currentMtime) < 0.5 else { return nil }
+        var tool = old
+        tool.path = raw.path
+        tool.allPaths = raw.allPaths
+        tool.category = Classifier.category(for: raw.path)
+        tool.interactive = Classifier.terminalOnlyNames.contains(raw.name)
+        ChineseNotes.apply(&tool, dictionary: dictionary)
+        return tool
     }
 
     private static func probe(
@@ -117,16 +175,16 @@ enum Scanner {
         var source = "none"
         var manExamples = ""
 
-        // Never execute binaries shipped inside other applications' bundles:
-        // they may write caches or configuration even for --help.
-        let category = Classifier.category(for: raw.path)
-        let skipHelp = Classifier.helpSkipNames.contains(raw.name) || category == .runtime
+        // System shims, GUI launchers and app-bundled helpers must never be
+        // executed: they can raise CLT/Java/keychain dialogs even for --help.
+        let skipHelp = Classifier.shouldSkipBinaryProbe(name: raw.name, path: raw.path)
         if !skipHelp {
             let result = ProcessSupport.run(
                 executable: raw.path,
                 arguments: ["--help"],
                 environment: ProcessSupport.probeEnvironment,
-                timeout: probeTimeout
+                timeout: probeTimeout,
+                isolateHome: true
             )
             let combined = [result.stdout, result.stderr]
                 .filter { !$0.isEmpty }
@@ -144,6 +202,8 @@ enum Scanner {
                 arguments: ["-P", "cat", raw.name],
                 environment: ProcessSupport.probeEnvironment,
                 timeout: probeTimeout + 0.5
+                // man/whatis are read-only system tools: keep the real HOME so
+                // their formatted-page cache stays effective.
             )
             let body = TextCleanup.cleaned(
                 [man.stdout, man.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
@@ -172,10 +232,12 @@ enum Scanner {
                 tool: raw.name
             )
         }
-        return makeTool(
+        var tool = makeTool(
             raw, usage: usage, source: source,
             manExamples: manExamples, description: description, dictionary: dictionary
         )
+        tool.probeMtime = modificationTime(raw.path)
+        return tool
     }
 
     /// Short error messages ("illegal option -- -h", "No manual entry for X")

@@ -1,6 +1,17 @@
 import Foundation
 
 enum Store {
+    /// `.atomic` replaces the file via rename, which macOS can refuse when the
+    /// existing file carries a `com.apple.provenance` attribute owned by a
+    /// previous build of the app. Fall back to an in-place write in that case.
+    private static func write(_ data: Data, to url: URL) throws {
+        do {
+            try data.write(to: url, options: [.atomic])
+        } catch {
+            try data.write(to: url)
+        }
+    }
+
     /// Debug scans (`--scan --limit N`) write here so they can never damage the
     /// production index used by the app.
     static var debugSnapshotURL: URL {
@@ -29,6 +40,15 @@ enum Store {
     ) throws -> Bool {
         AppPaths.prepare()
         if protectExisting, let existing = loadSnapshot(from: url) {
+            // An intentional change in probe policy legitimately changes usage
+            // coverage; only same-policy regressions are refused.
+            if existing.probePolicyVersion != snapshot.probePolicyVersion {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let data = try encoder.encode(snapshot)
+                try write(data, to: url)
+                return true
+            }
             let oldTools = existing.tools.count
             let oldUsage = existing.summary.withUsage
             let newTools = snapshot.tools.count
@@ -42,25 +62,26 @@ enum Store {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(snapshot)
-        try data.write(to: url, options: [.atomic])
+        try write(data, to: url)
         return true
     }
 
-    static func loadSaved() -> SavedStore {
+    static func loadSaved(from url: URL = AppPaths.savedURL) -> SavedStore {
         AppPaths.prepare()
-        guard let data = try? Data(contentsOf: AppPaths.savedURL),
+        guard let data = try? Data(contentsOf: url),
               let store = try? JSONDecoder().decode(SavedStore.self, from: data) else {
             return SavedStore()
         }
         return store
     }
 
-    static func saveSaved(_ store: SavedStore) throws {
+    static func saveSaved(
+        _ store: SavedStore, to url: URL = AppPaths.savedURL
+    ) throws {
         AppPaths.prepare()
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(store)
-        try data.write(to: AppPaths.savedURL, options: [.atomic])
+        try write(encoder.encode(store), to: url)
     }
 
     static var favoritesURL: URL {
@@ -89,7 +110,7 @@ enum Store {
         AppPaths.prepare()
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(store).write(to: url, options: [.atomic])
+        try write(encoder.encode(store), to: url)
     }
 
     static func loadHistory(from url: URL = Self.historyURL) -> RunHistory {
@@ -115,6 +136,6 @@ enum Store {
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(trimmed).write(to: url, options: [.atomic])
+        try write(encoder.encode(trimmed), to: url)
     }
 }

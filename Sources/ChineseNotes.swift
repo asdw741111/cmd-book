@@ -36,8 +36,9 @@ struct ToolNotes {
 /// sure even obscure system binaries have readable Chinese text and searchable
 /// Chinese keywords.
 enum ChineseNotes {
-    static func userPatch() -> UserChinesePatch? {
-        let url = AppPaths.userResourceURL(name: "tool-zh", extension: "json")
+    static func userPatch(
+        from url: URL = AppPaths.userResourceURL(name: "tool-zh", extension: "json")
+    ) -> UserChinesePatch? {
         guard let data = try? Data(contentsOf: url),
               let patch = try? JSONDecoder().decode(UserChinesePatch.self, from: data) else {
             return nil
@@ -72,6 +73,16 @@ enum ChineseNotes {
             merged.rules = rules + base.rules
         }
         return ordering(merged)
+    }
+
+    static func saveUserPatch(
+        _ patch: UserChinesePatch,
+        to url: URL = AppPaths.userResourceURL(name: "tool-zh", extension: "json")
+    ) throws {
+        AppPaths.prepare()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(patch).write(to: url, options: [.atomic])
     }
 
     static func load() -> ChineseDictionary {

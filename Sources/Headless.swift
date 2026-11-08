@@ -1,11 +1,16 @@
 import Foundation
 
 enum Headless {
-    static func scan(limit: Int?) {
+    static func scan(limit: Int?, forceFull: Bool = false) {
         let library = ExampleRepo.load()
         let exampleTools = ExampleRepo.toolNames(in: library)
-        print("解析登录 PATH 并开始扫描…")
-        let snapshot = Scanner.scan(limit: limit, exampleTools: exampleTools) { done, total in
+        print("解析登录 PATH 并开始扫描…\(forceFull ? "（强制全量）" : "")")
+        let previous: Snapshot? = (limit == nil && !forceFull)
+            ? Store.loadSnapshot() : nil
+        let snapshot = Scanner.scan(
+            limit: limit, exampleTools: exampleTools,
+            previous: previous, forceFull: forceFull
+        ) { done, total in
             if done % 100 == 0 || done == total {
                 fputs("  已扫描 \(done)/\(total)\n", stderr)
             }
@@ -19,7 +24,10 @@ enum Headless {
                 snapshot, to: destination, protectExisting: limit == nil
             )
         } catch {
-            writeError = error.localizedDescription
+            let underlying = error as NSError
+            writeError = "\(error.localizedDescription)"
+                + " [domain=\(underlying.domain) code=\(underlying.code)"
+                + " underlying=\(underlying.userInfo[NSUnderlyingErrorKey] ?? "none")]"
         }
 
         print("=== 扫描结果 ===")
@@ -27,6 +35,8 @@ enum Headless {
         print("发现工具       : \(snapshot.summary.discovered)")
         print("实际扫描       : \(snapshot.summary.scanned)")
         print("有用法文本     : \(snapshot.summary.withUsage)")
+        print("增量复用       : \(snapshot.reuseCount ?? 0) / \(snapshot.summary.scanned) 个工具（未变化的可执行文件跳过探测）")
+        print("未执行二进制   : \(snapshot.skippedBinaryProbes ?? 0) 个（系统 shim / GUI / 钥匙串类，仅查 man 与 whatis）")
         print("分类           : \(snapshot.summary.byCategory)")
         print("用法来源       : \(snapshot.summary.bySource)")
         for name in ["ffmpeg", "ffprobe", "photorec", "testdisk", "rg", "jq", "yt-dlp"] {
@@ -151,6 +161,31 @@ enum Headless {
             print("  \(tool.name)\(title)")
         }
         return 0
+    }
+
+    static func exportBackup(to path: String) -> Int32 {
+        let url = URL(fileURLWithPath: path)
+        do {
+            try Backup.export(to: url)
+            print("已导出用户数据：\(url.path)")
+            return 0
+        } catch {
+            fputs("导出失败：\(error)\n", stderr)
+            return 1
+        }
+    }
+
+    static func importBackup(from path: String) -> Int32 {
+        let url = URL(fileURLWithPath: path)
+        do {
+            let report = try Backup.restore(from: url)
+            print("导入完成：示例 \(report.examples) 条、中文词条/规则 \(report.dictionaryEntries) 条、"
+                  + "参数组合 \(report.saved) 个、收藏 \(report.favorites) 个、历史 \(report.history) 条")
+            return 0
+        } catch {
+            fputs("导入失败：\(error)\n", stderr)
+            return 1
+        }
     }
 
     /// Prints the effective resource set so users can verify their overlays
@@ -671,6 +706,135 @@ enum Headless {
               && favoritesScope.matches.first?.name == "ffmpeg"
               && ToolFilter.favorites.label == "已收藏",
               "已收藏范围只列出收藏工具", &failures)
+
+        // Backup format round-trip.
+        let backupURL = tempRoot.appendingPathComponent(
+            "cmdbook-backup-\(UUID().uuidString).json"
+        )
+        let sampleBackup = CmdBookBackup(
+            version: 1, exportedAt: "2026-11-07T00:00:00Z",
+            examples: UserExamplePatch(examples: [extraExample], remove: ["base"]),
+            dictionary: nil, saved: nil,
+            favorites: FavoriteStore(version: 1, tools: ["ffmpeg"], examples: []),
+            history: RunHistory()
+        )
+        do {
+            try JSONEncoder().encode(sampleBackup).write(to: backupURL)
+            let decoded = try Backup.load(from: backupURL)
+            check(decoded.version == 1
+                  && decoded.examples?.examples?.count == 1
+                  && decoded.favorites?.tools == ["ffmpeg"],
+                  "备份格式编解码往返", &failures)
+        } catch {
+            check(false, "备份格式往返: \(error)", &failures)
+        }
+        try? fileManager.removeItem(at: backupURL)
+
+        // Import merges into an isolated directory: no user data is touched.
+        let importRoot = tempRoot.appendingPathComponent(
+            "cmdbook-import-\(UUID().uuidString)", isDirectory: true
+        )
+        let importSource = tempRoot.appendingPathComponent(
+            "cmdbook-import-src-\(UUID().uuidString).json"
+        )
+        do {
+            try fileManager.createDirectory(at: importRoot, withIntermediateDirectories: true)
+            let rootFavorites = importRoot.appendingPathComponent("favorites.json")
+            let rootExamples = importRoot.appendingPathComponent("examples.json")
+            var seedFavorites = FavoriteStore()
+            seedFavorites.tools = ["seed-tool"]
+            try Store.saveFavorites(seedFavorites, to: rootFavorites)
+            try ExampleRepo.saveUserPatch(
+                UserExamplePatch(examples: [baseExample], remove: nil), to: rootExamples
+            )
+
+            var payload = CmdBookBackup(version: 1, exportedAt: "2026-11-08T00:00:00Z")
+            payload.examples = UserExamplePatch(examples: [extraExample], remove: nil)
+            payload.favorites = FavoriteStore(
+                version: 1, tools: ["seed-tool", "new-tool"], examples: []
+            )
+            try JSONEncoder().encode(payload).write(to: importSource)
+
+            let report = try Backup.restore(from: importSource, into: importRoot)
+            let mergedFavorites = Store.loadFavorites(from: rootFavorites)
+            let mergedExamples = ExampleRepo.userPatch(from: rootExamples)
+            check(Set(mergedFavorites.tools) == Set(["seed-tool", "new-tool"])
+                  && report.favorites == 2,
+                  "导入合并：收藏取并集且不重复", &failures)
+            check(mergedExamples?.examples?.count == 2
+                  && (mergedExamples?.examples?.contains { $0.id == "extra" } ?? false),
+                  "导入合并：示例按 id 合并", &failures)
+            _ = try Backup.restore(from: importSource, into: importRoot)
+            let again = Store.loadFavorites(from: rootFavorites)
+            check(again.tools.count == 2,
+                  "重复导入保持幂等", &failures)
+        } catch {
+            check(false, "备份合并: \(error)", &failures)
+        }
+        try? fileManager.removeItem(at: importRoot)
+        try? fileManager.removeItem(at: importSource)
+
+        // Probe policy: system shims / GUI / keychain binaries are never run.
+        check(Classifier.shouldSkipBinaryProbe(name: "git", path: "/usr/bin/git")
+              && Classifier.shouldSkipBinaryProbe(name: "java", path: "/usr/bin/java")
+              && Classifier.shouldSkipBinaryProbe(name: "security", path: "/usr/bin/security"),
+              "系统 shim / Java / 钥匙串工具不执行二进制", &failures)
+        check(!Classifier.shouldSkipBinaryProbe(name: "jq", path: "/opt/homebrew/bin/jq"),
+              "用户安装工具仍正常探测 --help", &failures)
+
+        // Snapshots written before probeMtime / Chinese fields must still load.
+        let legacyTool = """
+        {"name":"echo","path":"/bin/echo","allPaths":["/bin/echo"],
+         "category":"system","description":"","usage":"echo",
+         "usageSource":"help","manExamples":"","interactive":false}
+        """
+        if let data = legacyTool.data(using: .utf8),
+           let tool = try? JSONDecoder().decode(Tool.self, from: data) {
+            check(tool.probeMtime == nil && tool.titleZh.isEmpty,
+                  "旧快照缺少 probeMtime 与中文字段仍可解码", &failures)
+        } else {
+            check(false, "旧快照兼容解码", &failures)
+        }
+
+        // Incremental scan: unchanged executable reuses the previous probe.
+        let incRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cmdbook-inc-\(UUID().uuidString)")
+        do {
+            try fileManager.createDirectory(at: incRoot, withIntermediateDirectories: true)
+            let script = incRoot.appendingPathComponent("inctool")
+            try "#!/bin/sh\necho hi\n".write(
+                to: script, atomically: true, encoding: .utf8
+            )
+            try fileManager.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: script.path
+            )
+            var mtime: Double?
+            if let attributes = try? fileManager.attributesOfItem(atPath: script.path),
+               let date = attributes[.modificationDate] as? Date {
+                mtime = date.timeIntervalSince1970
+            }
+            var cached = Tool(
+                name: "inctool", path: script.path, allPaths: [script.path],
+                category: .user, description: "", usage: "cached usage",
+                usageSource: "help", manExamples: "", interactive: false
+            )
+            cached.probeMtime = mtime
+            let previousSnapshot = Snapshot(tools: [cached])
+            let incremental = Scanner.scan(
+                pathEnv: incRoot.path, previous: previousSnapshot
+            )
+            check(incremental.reuseCount == 1
+                  && incremental.tools.first?.usage == "cached usage",
+                  "未变化工具复用探测结果（增量扫描）", &failures)
+            let forced = Scanner.scan(
+                pathEnv: incRoot.path, previous: previousSnapshot, forceFull: true
+            )
+            check(forced.reuseCount == 0,
+                  "强制全量时跳过复用", &failures)
+        } catch {
+            check(false, "增量扫描测试准备: \(error)", &failures)
+        }
+        try? fileManager.removeItem(at: incRoot)
 
         for url in [favURL, histURL, patchURL] {
             try? fileManager.removeItem(at: url)
