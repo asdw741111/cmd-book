@@ -63,8 +63,17 @@ enum Scanner {
         let dictionary = ChineseNotes.load()
 
         var cache: [String: Tool] = [:]
+        var repaired = 0
         if !forceFull, let previous = previous {
             for tool in previous.tools {
+                // Self-heal: older builds stored probe errors as usage text.
+                // Re-probe those entries once; empty usage is cached normally,
+                // so this never loops indefinitely.
+                if TextCleanup.looksLikeProbeError(tool.usage)
+                    || TextCleanup.hasProbeErrorLines(tool.usage) {
+                    repaired += 1
+                    continue
+                }
                 cache["\(tool.name)|\(tool.path)"] = tool
             }
         }
@@ -140,6 +149,7 @@ enum Scanner {
             Classifier.shouldSkipBinaryProbe(name: $0.name, path: $0.path)
         }.count
         snapshot.probePolicyVersion = Self.probePolicyVersion
+        snapshot.repairedCount = repaired
         return snapshot
     }
 
@@ -189,9 +199,11 @@ enum Scanner {
             let combined = [result.stdout, result.stderr]
                 .filter { !$0.isEmpty }
                 .joined(separator: "\n")
-            let normalized = TextCleanup.normalize(combined)
-            if TextCleanup.looksLikeUsage(normalized) && !Self.looksLikeProbeError(normalized) {
-                usage = normalized
+            let cleaned = TextCleanup.removingProbeErrorLines(
+                TextCleanup.normalize(combined)
+            )
+            if TextCleanup.looksLikeUsage(cleaned) {
+                usage = cleaned
                 source = "help"
             }
         }
@@ -210,9 +222,11 @@ enum Scanner {
             )
             manExamples = TextCleanup.manExamples(from: body)
             if source == "none" {
-                let normalized = TextCleanup.normalize(body)
-                if TextCleanup.looksLikeUsage(normalized) && !Self.looksLikeProbeError(normalized) {
-                    usage = normalized
+                let cleaned = TextCleanup.removingProbeErrorLines(
+                    TextCleanup.normalize(body)
+                )
+                if TextCleanup.looksLikeUsage(cleaned) {
+                    usage = cleaned
                     source = "man"
                 }
             }
@@ -238,22 +252,6 @@ enum Scanner {
         )
         tool.probeMtime = modificationTime(raw.path)
         return tool
-    }
-
-    /// Short error messages ("illegal option -- -h", "No manual entry for X")
-    /// are not usage text. Long help bodies may legitimately mention these
-    /// phrases, so gate on length too.
-    private static func looksLikeProbeError(_ text: String) -> Bool {
-        guard text.count < 500 else { return false }
-        let lower = text.lowercased()
-        let markers = [
-            "illegal option", "unknown option", "unrecognized option",
-            "invalid option", "unknown argument", "unknown architecture",
-            "command not found", "no such file or directory",
-            "no manual entry", "no entry for", "could not refer to file",
-            "未能打开文件", "无此文件或目录", "未能完成该操作"
-        ]
-        return markers.contains { lower.contains($0) }
     }
 
     private static func makeTool(

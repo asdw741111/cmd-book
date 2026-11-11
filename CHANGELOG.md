@@ -6,6 +6,31 @@ CmdBook 的变更记录，按日期倒序。
 > 相关文件已于 2026-11-06 清理。历史提交 SHA 曾因修正 GitHub 作者归属而整体重写，
 > 因此本文件不再引用具体 commit 链接。
 
+## 2026-11-11（开发中）
+
+### 修复
+
+- **用法文本里混入运行时报错**：用户发现 `lftpget` 的「用法」是
+  `.../lftpget: line 70: exec: lftp: not found`。根因是探测环境刻意使用最小 PATH
+  （让 shell wrapper 快速失败、不产生真实副作用），而 `looksLikeUsage` 只要求
+  「长度 ≥ 20 字符」、`looksLikeProbeError` 的错误词表只有 `command not found`，
+  于是 stderr 被当成帮助文本写入 `usage` 与 `description`。
+- 排查后确认影响面约 20 条（dlopen/`PR_LOAD_LIBRARY_ERROR`、Python Traceback、
+  `CLI not found at .../cmdbook-XXX`、`Error in fopenReadStream` 等），
+  同时也存在 `gettext`、`pygmentize` 与 man 页这类**真实帮助文本但含 "not found" 字样**，
+  不能一刀切。修法：
+  - `TextCleanup.looksLikeProbeError` 统一到 TextCleanup，覆盖 shell/exec、
+    加载器、解释器与选项解析错误；仅对 600 字符以内的短输出判定，
+    且遇到 `usage:` / `synopsis` / `options:` 头时放行。
+  - `removingProbeErrorLines` 按行剥离错误行，保留后续真实用法块
+    （`fzf-tmux` 的「tmux: command not found + usage」即属此类）。
+  - 被拒绝的 `--help` 结果自动回落到 `man` / `whatis`，中文说明仍由词典兜底。
+- **旧快照自愈**：增量扫描构建复用缓存时跳过「用法文本看起来像报错」或
+  「含错误行」的历史条目，强制重探一次并记入 `repairedCount`；空 usage 会被正常缓存，
+  不会反复重探。首次运行重探 20 条，随后**污染归零（0 / 2116）**。
+
+- `--verify` 扩至 82 项（新增报错识别、长文本不误杀、混合文本剥离、自愈重探等用例）。
+
 ## 2026-11-08（开发中）
 
 ### 安全加固

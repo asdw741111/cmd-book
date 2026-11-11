@@ -37,6 +37,7 @@ enum Headless {
         print("有用法文本     : \(snapshot.summary.withUsage)")
         print("增量复用       : \(snapshot.reuseCount ?? 0) / \(snapshot.summary.scanned) 个工具（未变化的可执行文件跳过探测）")
         print("未执行二进制   : \(snapshot.skippedBinaryProbes ?? 0) 个（系统 shim / GUI / 钥匙串类，仅查 man 与 whatis）")
+        print("自愈重探       : \(snapshot.repairedCount ?? 0) 条（旧快照中把报错误当用法文本，已重新探测）")
         print("分类           : \(snapshot.summary.byCategory)")
         print("用法来源       : \(snapshot.summary.bySource)")
         for name in ["ffmpeg", "ffprobe", "photorec", "testdisk", "rg", "jq", "yt-dlp"] {
@@ -837,10 +838,57 @@ enum Headless {
             )
             check(forced.reuseCount == 0,
                   "强制全量时跳过复用", &failures)
+
+            // Self-heal: a stored runtime error must be re-probed, not reused.
+            var polluted = cached
+            polluted.usage = "inctool: line 70: exec: helper: not found"
+            let healed = Scanner.scan(
+                pathEnv: incRoot.path, previous: Snapshot(tools: [polluted])
+            )
+            check(healed.repairedCount == 1 && healed.reuseCount == 0,
+                  "自愈：旧快照中报错文本条目会被重新探测", &failures)
+
+            var mixedTool = cached
+            mixedTool.usage = "/opt/homebrew/bin/inctool: line 22: tmux: command not found\n"
+                + "usage: inctool [OPTIONS]"
+            let mixedHealed = Scanner.scan(
+                pathEnv: incRoot.path, previous: Snapshot(tools: [mixedTool])
+            )
+            check(mixedHealed.repairedCount == 1,
+                  "自愈：混合文本中的错误行也触发重探", &failures)
         } catch {
             check(false, "增量扫描测试准备: \(error)", &failures)
         }
         try? fileManager.removeItem(at: incRoot)
+
+        // Probe error detection: reject runtime failures, keep genuine help.
+        let execError = "/opt/homebrew/Cellar/lftp/4.9.3/bin/lftpget: line 70: exec: lftp: not found"
+        check(TextCleanup.looksLikeProbeError(execError)
+              && !TextCleanup.looksLikeUsage(execError),
+              "exec: not found 不再被当作用法文本", &failures)
+        check(TextCleanup.looksLikeProbeError(
+            "Traceback (most recent call last):\n  File \"x\", line 3"
+        ), "Python Traceback 识别为探测错误", &failures)
+        check(TextCleanup.looksLikeProbeError(
+            "Error: CLI not found at /var/folders/xx/cmdbook-ABC"
+        ), "CLI not found 识别为探测错误", &failures)
+        let realHelp = "Usage: gettext [OPTION] [[TEXTDOMAIN] MSGID]\n"
+            + String(
+                repeating: "-d, --domain=TEXTDOMAIN  retrieve messages; if not found, return original\n",
+                count: 20
+            )
+        check(!TextCleanup.looksLikeProbeError(realHelp)
+              && TextCleanup.looksLikeUsage(realHelp),
+              "长帮助文本中的 not found 不被误杀", &failures)
+        let mixed = "/opt/homebrew/bin/fzf-tmux: line 22: tmux: command not found\n"
+            + "usage: fzf-tmux [LAYOUT OPTIONS] [--] [FZF OPTIONS]"
+        let mixedCleaned = TextCleanup.removingProbeErrorLines(mixed)
+        check(!mixedCleaned.contains("command not found")
+              && mixedCleaned.hasPrefix("usage:"),
+              "混合输出剥离错误行并保留 usage", &failures)
+        check(TextCleanup.hasProbeErrorLines(mixed)
+              && !TextCleanup.hasProbeErrorLines(mixedCleaned),
+              "可识别混合文本中的错误行供自愈判断", &failures)
 
         // Static risk derivation: a declared "safe" label can never downgrade
         // what the arguments actually allow.

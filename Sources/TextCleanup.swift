@@ -69,11 +69,79 @@ enum TextCleanup {
         return limited.joined(separator: "\n")
     }
 
+    /// Runtime failures from `--help` probes must never become usage text.
+    ///
+    /// A minimal PATH is intentional: shell wrappers (e.g. `lftpget` calling
+    /// `exec lftp`) fail fast instead of performing real work. Their stderr is
+    /// therefore expected — the bug was treating it as help output. Only short
+    /// outputs are rejected; long help bodies legitimately mention phrases
+    /// like "not found" (gettext, pygmentize, man pages) and are preserved.
+    static func looksLikeProbeError(_ text: String) -> Bool {
+        let visible = text
+            .replacingOccurrences(of: "[用法已截断]", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !visible.isEmpty, visible.count < 600 else { return false }
+        let lower = visible.lowercased()
+
+        // A real usage block wins. Leading error lines are removed separately
+        // by `removingProbeErrorLines` before this check.
+        if lower.hasPrefix("usage:") || lower.contains("\nusage:")
+            || lower.hasPrefix("options:") || lower.contains("\noptions:")
+            || lower.contains("synopsis") { return false }
+
+        let markers = [
+            // shell / wrapper / exec failures
+            "exec:", ": line ", "command not found", ": not found", "not found",
+            "no such file or directory", "permission denied", "cannot execute",
+            "bad interpreter", "cli not found",
+            // dynamic loaders and interpreters
+            "traceback (most recent call last)", "dlopen(", "failed to load",
+            "pr_load_library_error", "modulenotfounderror", "importerror:",
+            "error in ", "error:", "fatal:", "failed to open", "please install",
+            // option parsing errors (pre-existing list)
+            "illegal option", "unknown option", "unrecognized option",
+            "invalid option", "unknown argument", "unknown architecture",
+            "no manual entry", "no entry for", "could not refer to file",
+            "未能打开文件", "无此文件或目录", "未能完成该操作"
+        ]
+        return markers.contains { lower.contains($0) }
+    }
+
+    /// True when a single line is a probe-time runtime failure.
+    static func isProbeErrorLine(_ line: String) -> Bool {
+        let lower = line.lowercased()
+        return (lower.contains("exec:") && lower.contains("not found"))
+            || (lower.contains(": line ") && lower.contains("not found"))
+            || lower.hasPrefix("traceback")
+            || lower.hasPrefix("  file \"")
+            || lower.contains("modulenotfounderror")
+            || lower.contains("dlopen(")
+            || lower.contains("failed to load dynamic library")
+            || lower.contains("error in fopenreadstream")
+    }
+
+    /// Mixed output can still contain error lines even when a real usage block
+    /// follows (e.g. `fzf-tmux` prints a missing-tmux error then its usage).
+    static func hasProbeErrorLines(_ text: String) -> Bool {
+        text.split(separator: "\n", omittingEmptySubsequences: false)
+            .contains { isProbeErrorLine(String($0)) }
+    }
+
+    /// Drops runtime-error lines from mixed output, preserving the usage block.
+    static func removingProbeErrorLines(_ text: String) -> String {
+        let kept = text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !isProbeErrorLine(String($0)) }
+        return kept.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func looksLikeUsage(_ text: String) -> Bool {
         let visible = text
             .replacingOccurrences(of: "[用法已截断]", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return visible.count >= 20
+        guard visible.count >= 20 else { return false }
+        return !looksLikeProbeError(visible)
     }
 
     static func description(from text: String) -> String {

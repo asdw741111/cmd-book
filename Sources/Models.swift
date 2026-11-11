@@ -89,6 +89,9 @@ struct Snapshot: Codable {
     /// change, so the quality gate can tell an intentional coverage change
     /// from an accidental degraded scan. Optional for old snapshots.
     var probePolicyVersion: Int?
+    /// Tools re-probed because their previous "usage" was actually a runtime
+    /// error written by an older build. Optional for old snapshots.
+    var repairedCount: Int?
 }
 
 struct ExampleField: Codable, Identifiable, Hashable {

@@ -242,7 +242,7 @@ Sources/
   ListScrollResetter.swift 搜索变化时复位侧栏列表滚动位置
   ProcessSupport.swift  子进程封装（临时文件捕获 + 硬超时 + 独立 CWD）、登录 PATH 解析
   Scanner.swift         PATH 发现、mtime 增量复用、探测策略、中文说明写入快照
-  TextCleanup.swift     ANSI/重字符清理、规范化、描述与 EXAMPLES 提取
+  TextCleanup.swift     ANSI/重字符清理、规范化、报错文本识别与剥离、描述与 EXAMPLES 提取
   Runner.swift          白名单执行器、流式输出、Terminal 转交
   Store.swift           快照/参数/收藏/历史读写（原子写入）
   Headless.swift        无界面扫描、自检、中文搜索、性能基准、资源诊断
@@ -276,8 +276,8 @@ docs/
 无界面命令（`BIN=dist/CmdBook.app/Contents/MacOS/CmdBook`）：
 
 ```sh
-$BIN --verify                # 74 项自检，含搜索、快照保护、执行策略、资源合并、导入合并、
-                             # 探测策略、风险推导与结果集无截断
+$BIN --verify                # 82 项自检，含搜索、快照保护、执行策略、资源合并、导入合并、
+                             # 探测策略、风险推导、结果集无截断与用法文本清洗
 $BIN --runprobe              # 流式执行器端到端验证
 $BIN --resources             # 查看生效的示例/词条/规则、收藏数与历史条数
 $BIN --favorites             # 列出「已收藏」范围里的工具（与界面筛选器一致）
@@ -297,7 +297,16 @@ $BIN --bench                # 交互性能回归测试（帧预算 16.7 ms）
 Terminal 脚本的工作目录与自删除、退化快照拒绝覆盖、用户资源增量合并与热重载、
 收藏持久化与「已收藏」范围过滤、运行历史裁剪、占位符字段提取、示例补丁写回、
 备份格式往返、导入合并与幂等、探测策略跳过判断、mtime 增量复用、旧快照兼容解码、
-argv 风险推导与不可降级、400 条结果集无截断、快照编解码。
+argv 风险推导与不可降级、400 条结果集无截断、探测报错识别与混合文本剥离、
+旧快照污染条目自愈重探、快照编解码。
+
+**用法文本清洗**：探测环境刻意使用最小 PATH，让 `lftpget` 这类 shell wrapper
+在 `exec` 依赖时快速失败而不产生真实副作用；这类 stderr 过去会被误当成用法文本
+写入快照。现在 `TextCleanup` 识别 `exec: ... not found`、Python Traceback、
+dlopen/`PR_LOAD_LIBRARY_ERROR`、`CLI not found`、`: line N:` 等形态，
+短文本直接判为错误、混合文本剥离错误行并保留 `usage:` 块；
+长帮助正文（gettext、pygmentize、man 页）中出现的 "not found" 不受影响。
+增量扫描会自动重新探测旧快照里被污染的条目，输出中的「自愈重探」即该项统计。
 
 **可观测性**：关键路径（内置/用户资源载入、快照与用户数据解码、原子写回退、
 参数组合删除、目录创建）统一写入 `os_log`，在 Console.app 按
@@ -448,6 +457,8 @@ git push origin main      # 首次可用 git push -u origin main
   向工作区/`~/Library` 写配置或访问真实登录钥匙串；应用包内的 `runtime` 二进制
   一律不执行 `--help`。只读的 `man`/`whatis` 保留真实 HOME 以复用格式化缓存。
 - 探测硬约束：单进程 1.5 秒 `SIGKILL`、并发 20、捕获上限 256 KiB、全局软超时 180 秒。
+- 探测输出的运行时报错（`exec: ... not found`、Traceback、dlopen 失败等）不会写入
+  `usage` / `description`；被拒绝的工具自动改查 `man` / `whatis`，中文说明由词典兜底。
 - 快照原子写入（受限时回退原位写），中断不会破坏上一份好数据。
 - GUI 进程不继承 shell PATH，执行时使用工具绝对路径并显式注入扫描时记录的 PATH。
 
