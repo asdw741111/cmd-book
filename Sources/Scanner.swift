@@ -7,7 +7,8 @@ enum Scanner {
     static let probeTimeout: TimeInterval = 1.5
     static let globalDeadline: TimeInterval = 180
     /// 2 = system/GUI/keychain binaries are never executed during probing.
-    static let probePolicyVersion = 2
+    /// 3 = man/whatis use the full login PATH + resolved MANPATH.
+    static let probePolicyVersion = 3
 
     static func discover(pathEnv: String) -> (dirs: [String], tools: [DiscoveredTool]) {
         var seenDirectories: Set<String> = []
@@ -61,15 +62,22 @@ enum Scanner {
         let (_, discovered) = discover(pathEnv: loginPath)
         let targets: [DiscoveredTool] = limit.map { Array(discovered.prefix($0)) } ?? discovered
         let dictionary = ChineseNotes.load()
+        let docEnvironment = ProcessSupport.documentationEnvironment(
+            loginPath: loginPath
+        )
 
         var cache: [String: Tool] = [:]
         var repaired = 0
         if !forceFull, let previous = previous {
+            // A probe-policy change invalidates every cached result: e.g. v3
+            // lets man find user-installed pages that v2 silently missed.
+            let policyChanged = previous.probePolicyVersion != Self.probePolicyVersion
             for tool in previous.tools {
                 // Self-heal: older builds stored probe errors as usage text.
                 // Re-probe those entries once; empty usage is cached normally,
                 // so this never loops indefinitely.
-                if TextCleanup.looksLikeProbeError(tool.usage)
+                if policyChanged
+                    || TextCleanup.looksLikeProbeError(tool.usage)
                     || TextCleanup.hasProbeErrorLines(tool.usage) {
                     repaired += 1
                     continue
@@ -114,7 +122,8 @@ enum Scanner {
                     group.leave()
                 }
                 let tool = probe(
-                    raw, wantsMan: exampleTools.contains(raw.name), dictionary: dictionary
+                    raw, wantsMan: exampleTools.contains(raw.name),
+                    dictionary: dictionary, docEnvironment: docEnvironment
                 )
                 results.withValue { $0[index] = tool }
                 let done = counter.withValue { value -> Int in
@@ -179,7 +188,8 @@ enum Scanner {
     }
 
     private static func probe(
-        _ raw: DiscoveredTool, wantsMan: Bool, dictionary: ChineseDictionary
+        _ raw: DiscoveredTool, wantsMan: Bool, dictionary: ChineseDictionary,
+        docEnvironment: [String: String]
     ) -> Tool {
         var usage = ""
         var source = "none"
@@ -212,10 +222,10 @@ enum Scanner {
             let man = ProcessSupport.run(
                 executable: "/usr/bin/man",
                 arguments: ["-P", "cat", raw.name],
-                environment: ProcessSupport.probeEnvironment,
+                environment: docEnvironment,
                 timeout: probeTimeout + 0.5
-                // man/whatis are read-only system tools: keep the real HOME so
-                // their formatted-page cache stays effective.
+                // man/whatis are read-only: full login PATH + resolved MANPATH
+                // so user-installed manual pages are discoverable.
             )
             let body = TextCleanup.cleaned(
                 [man.stdout, man.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
@@ -237,7 +247,7 @@ enum Scanner {
             let whatis = ProcessSupport.run(
                 executable: "/usr/bin/whatis",
                 arguments: [raw.name],
-                environment: ProcessSupport.probeEnvironment,
+                environment: docEnvironment,
                 timeout: 1.0,
                 maxBytes: 8192
             )

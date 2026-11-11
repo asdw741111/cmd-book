@@ -826,7 +826,8 @@ enum Headless {
                 usageSource: "help", manExamples: "", interactive: false
             )
             cached.probeMtime = mtime
-            let previousSnapshot = Snapshot(tools: [cached])
+            var previousSnapshot = Snapshot(tools: [cached])
+            previousSnapshot.probePolicyVersion = Scanner.probePolicyVersion
             let incremental = Scanner.scan(
                 pathEnv: incRoot.path, previous: previousSnapshot
             )
@@ -842,8 +843,10 @@ enum Headless {
             // Self-heal: a stored runtime error must be re-probed, not reused.
             var polluted = cached
             polluted.usage = "inctool: line 70: exec: helper: not found"
+            var pollutedSnapshot = Snapshot(tools: [polluted])
+            pollutedSnapshot.probePolicyVersion = Scanner.probePolicyVersion
             let healed = Scanner.scan(
-                pathEnv: incRoot.path, previous: Snapshot(tools: [polluted])
+                pathEnv: incRoot.path, previous: pollutedSnapshot
             )
             check(healed.repairedCount == 1 && healed.reuseCount == 0,
                   "自愈：旧快照中报错文本条目会被重新探测", &failures)
@@ -851,11 +854,21 @@ enum Headless {
             var mixedTool = cached
             mixedTool.usage = "/opt/homebrew/bin/inctool: line 22: tmux: command not found\n"
                 + "usage: inctool [OPTIONS]"
+            var mixedSnapshot = Snapshot(tools: [mixedTool])
+            mixedSnapshot.probePolicyVersion = Scanner.probePolicyVersion
             let mixedHealed = Scanner.scan(
-                pathEnv: incRoot.path, previous: Snapshot(tools: [mixedTool])
+                pathEnv: incRoot.path, previous: mixedSnapshot
             )
             check(mixedHealed.repairedCount == 1,
                   "自愈：混合文本中的错误行也触发重探", &failures)
+
+            var oldPolicy = Snapshot(tools: [cached])
+            oldPolicy.probePolicyVersion = 2
+            let policyHealed = Scanner.scan(
+                pathEnv: incRoot.path, previous: oldPolicy
+            )
+            check(policyHealed.repairedCount == 1,
+                  "探测策略版本变化时全量重探", &failures)
         } catch {
             check(false, "增量扫描测试准备: \(error)", &failures)
         }
@@ -889,6 +902,31 @@ enum Headless {
         check(TextCleanup.hasProbeErrorLines(mixed)
               && !TextCleanup.hasProbeErrorLines(mixedCleaned),
               "可识别混合文本中的错误行供自愈判断", &failures)
+        let manualPage = """
+        lftpget(1)                    General Commands Manual                lftpget(1)
+        NAME
+        lftpget - get a file with lftp(1)
+        SYNOPSIS
+        lftpget [-c] [-d] [-v] URL [URL...]
+        DESCRIPTION
+        This manual page documents briefly the lftpget command.
+        lftpget is a shell script for downloading by URL, it calls `lftp -c'.
+        OPTIONS
+        -c     Continue a previous download.
+        -d     Debug output.
+        -v     Verbose messages.
+        SEE ALSO
+        lftp(1), wget(1).
+        """
+        check(TextCleanup.looksLikeUsage(manualPage)
+              && !TextCleanup.looksLikeProbeError(manualPage),
+              "真实 man 页内容被接受为用法文本", &failures)
+        let docEnv = ProcessSupport.documentationEnvironment(
+            loginPath: "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        )
+        check(docEnv["PATH"] == "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+              && (docEnv["MANPATH"]?.contains("/opt/homebrew/share/man") ?? false),
+              "文档探测环境带完整 PATH 与用户手册路径", &failures)
 
         // Static risk derivation: a declared "safe" label can never downgrade
         // what the arguments actually allow.

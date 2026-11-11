@@ -22,6 +22,28 @@ enum ProcessSupport {
         "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"
     ]
 
+    /// Environment for read-only documentation lookups.
+    ///
+    /// `--help` probes intentionally use a minimal PATH so shell wrappers fail
+    /// fast. `man`/`whatis` never execute the target binary, so they need the
+    /// full login PATH (and the MANPATH derived from it) to find Homebrew and
+    /// user-installed manual pages. Resolving MANPATH once also avoids letting
+    /// every `man` call derive it (~0.12 s → ~0.03 s each).
+    static func documentationEnvironment(loginPath: String) -> [String: String] {
+        var environment = probeEnvironment
+        environment["PATH"] = loginPath
+        let result = run(
+            executable: "/usr/bin/manpath",
+            arguments: [],
+            environment: environment,
+            timeout: 1.0,
+            maxBytes: 8192
+        )
+        let manPath = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !manPath.isEmpty { environment["MANPATH"] = manPath }
+        return environment
+    }
+
     /// Runs a child process with a hard timeout, capturing stdout/stderr via temp files.
     /// Temp files avoid the pipe deadlock that occurs when a child writes more than
     /// the pipe buffer while nobody is reading.

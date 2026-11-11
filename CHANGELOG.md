@@ -8,6 +8,21 @@ CmdBook 的变更记录，按日期倒序。
 
 ## 2026-11-11（开发中）
 
+### 修复（续）
+
+- **`man` 查不到用户安装工具的手册页**：上一轮清洗掉 `lftpget` 的报错文本后，
+  它的 `usage` 仍为空，但用户指出本机有完整的 `lftpget(1)` 手册页。实测确认
+  `man` **确实被调用了**，只是最小 PATH 让它只看到 `/usr/share/man` 等系统目录，
+  返回 `No manual entry for lftpget`（0.07 s）；正常环境下同一命令返回 1085 字节。
+  修法：`--help` 保持最小 PATH（安全边界不变），只读的 `man`/`whatis` 改用
+  `ProcessSupport.documentationEnvironment(loginPath:)`——完整登录 PATH 加上
+  一次性解析的 `MANPATH`。附带收益：单次 `man` 从约 0.12 s 降到约 0.03 s。
+- 探测策略版本升到 3；`Scanner.scan` 在策略版本变化时让所有条目失效、
+  一次性全量重探，把此前因 man 失败而空缺的用法文本补齐。
+  受控验证：策略回退到 2 后重扫得 `增量复用 0 / 自愈重探 2122 条 / 58.6 s`，
+  之后 `lftpget` 为 `usageSource=man`、描述 `lftpget - get a file with lftp(1)`。
+- `--verify` 扩至 85 项（新增策略变更重探、真实 man 页被接受、文档环境断言）。
+
 ### 修复
 
 - **用法文本里混入运行时报错**：用户发现 `lftpget` 的「用法」是

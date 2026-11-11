@@ -276,8 +276,8 @@ docs/
 无界面命令（`BIN=dist/CmdBook.app/Contents/MacOS/CmdBook`）：
 
 ```sh
-$BIN --verify                # 82 项自检，含搜索、快照保护、执行策略、资源合并、导入合并、
-                             # 探测策略、风险推导、结果集无截断与用法文本清洗
+$BIN --verify                # 85 项自检，含搜索、快照保护、执行策略、资源合并、导入合并、
+                             # 探测策略、风险推导、结果集无截断、用法文本清洗与文档环境
 $BIN --runprobe              # 流式执行器端到端验证
 $BIN --resources             # 查看生效的示例/词条/规则、收藏数与历史条数
 $BIN --favorites             # 列出「已收藏」范围里的工具（与界面筛选器一致）
@@ -298,7 +298,8 @@ Terminal 脚本的工作目录与自删除、退化快照拒绝覆盖、用户�
 收藏持久化与「已收藏」范围过滤、运行历史裁剪、占位符字段提取、示例补丁写回、
 备份格式往返、导入合并与幂等、探测策略跳过判断、mtime 增量复用、旧快照兼容解码、
 argv 风险推导与不可降级、400 条结果集无截断、探测报错识别与混合文本剥离、
-旧快照污染条目自愈重探、快照编解码。
+旧快照污染条目自愈重探、策略变更全量重探、真实 man 页被接受、
+文档探测环境带完整 PATH/MANPATH、快照编解码。
 
 **用法文本清洗**：探测环境刻意使用最小 PATH，让 `lftpget` 这类 shell wrapper
 在 `exec` 依赖时快速失败而不产生真实副作用；这类 stderr 过去会被误当成用法文本
@@ -306,7 +307,10 @@ argv 风险推导与不可降级、400 条结果集无截断、探测报错识�
 dlopen/`PR_LOAD_LIBRARY_ERROR`、`CLI not found`、`: line N:` 等形态，
 短文本直接判为错误、混合文本剥离错误行并保留 `usage:` 块；
 长帮助正文（gettext、pygmentize、man 页）中出现的 "not found" 不受影响。
-增量扫描会自动重新探测旧快照里被污染的条目，输出中的「自愈重探」即该项统计。
+被拒绝的 `--help` 会回落到 `man` / `whatis`；`man` 使用完整登录 PATH 与
+解析好的 `MANPATH`，因此 `lftpget` 这类 wrapper 仍能拿到真实手册页作为用法文本。
+增量扫描会自动重新探测旧快照里被污染的条目，输出中的「自愈重探」即该项统计；
+探测策略版本（`probePolicyVersion`）变化时触发一次性全量重探。
 
 **可观测性**：关键路径（内置/用户资源载入、快照与用户数据解码、原子写回退、
 参数组合删除、目录创建）统一写入 `os_log`，在 Console.app 按
@@ -455,7 +459,11 @@ git push origin main      # 首次可用 git push -u origin main
   Developer Tools」、Java 运行时提示或钥匙串授权。输出中的「未执行二进制」即该项统计。
 - 探测阶段每个进程使用**独立临时工作目录与独立 HOME**（结束后清理），避免 CLI
   向工作区/`~/Library` 写配置或访问真实登录钥匙串；应用包内的 `runtime` 二进制
-  一律不执行 `--help`。只读的 `man`/`whatis` 保留真实 HOME 以复用格式化缓存。
+  一律不执行 `--help`。
+- **`--help` 与文档查询使用不同环境**：前者用最小 PATH，让 shell wrapper 快速失败；
+  只读的 `man`/`whatis` 则用完整登录 PATH 与解析好的 `MANPATH`，以便找到
+  Homebrew / 用户安装工具的手册页（否则 `man lftpget` 会返回
+  `No manual entry`）。两者都不执行目标二进制。
 - 探测硬约束：单进程 1.5 秒 `SIGKILL`、并发 20、捕获上限 256 KiB、全局软超时 180 秒。
 - 探测输出的运行时报错（`exec: ... not found`、Traceback、dlopen 失败等）不会写入
   `usage` / `description`；被拒绝的工具自动改查 `man` / `whatis`，中文说明由词典兜底。
